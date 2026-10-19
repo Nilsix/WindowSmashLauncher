@@ -141,10 +141,19 @@ if (-not (Test-Path -LiteralPath (Join-Path $Clone '.git')) -or -not (Test-Path 
     }
 }
 
+# cmd.exe misreads a batch file whose lines end with a bare LF (a test with such a copy ran fragments of its lines as
+# commands): a repository copy like that, or one without its boot part, is neither copied nor started.
+$repoBat = Join-Path $Clone 'WindowSmash Launcher.bat'
+$repoOk = $false
+try {
+    $rt = [IO.File]::ReadAllText($repoBat)
+    $repoOk = -not [regex]::IsMatch($rt, '(?<!\r)\n') -and $rt.Contains("`r`n#@@BEGIN boot.ps1`r`n") -and $rt.Contains("`r`n#@@END boot.ps1")
+} catch {}
+if (-not $repoOk) { Write-Host '  (la copie du launcher dans le dépôt est abîmée : je garde celle-ci et je continue)' -ForegroundColor Yellow }
+
 # The file the user started (Desktop, Downloads...) is refreshed with the repository's copy. Safe while that file is
 # running: cmd.exe has already read the whole block that started this script and does not read the file again.
-$repoBat = Join-Path $Clone 'WindowSmash Launcher.bat'
-if ($Self -and (Test-Path -LiteralPath $Self) -and (Test-Path -LiteralPath $repoBat)) {
+if ($repoOk -and $Self -and (Test-Path -LiteralPath $Self)) {
     try {
         $own = (Resolve-Path -LiteralPath $Self).Path
         if ($own -ne (Resolve-Path -LiteralPath $repoBat).Path -and (Get-FileHash -LiteralPath $own).Hash -ne (Get-FileHash -LiteralPath $repoBat).Hash) {
@@ -154,7 +163,7 @@ if ($Self -and (Test-Path -LiteralPath $Self) -and (Test-Path -LiteralPath $repo
     } catch { Write-Host "  (copie du launcher non mise à jour : $($_.Exception.Message))" -ForegroundColor Yellow }
 }
 
-if ($updated -and -not $env:WSL_RELAUNCHED -and -not $env:WSL_NO_RELAUNCH) {
+if ($repoOk -and $updated -and -not $env:WSL_RELAUNCHED -and -not $env:WSL_NO_RELAUNCH) {
     Write-Host '  Redémarrage dans la nouvelle version...'
     $env:WSL_RELAUNCHED = '1'
     $env:WSL_KITDIR = $KitDir
