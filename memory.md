@@ -338,8 +338,19 @@ Pinned versions (`ws_setup.ps1` top):
 - Visual Studio Build Tools: `https://aka.ms/vs/17/release/vs_BuildTools.exe` (not pinned; signature checked).
 
 Test hooks (environment): `WS_NO_BUILD=1` (install everything but skip the compile), `WS_STOP_AFTER=repo|revision|
-tools`, `WS_NO_NOTEPAD=1`, `WS_REPORT_DIR=<dir>`; bootstrap: `WSL_NO_RELAUNCH=1`, `WSL_REPO_URL=<git url>`.
+tools`, `WS_NO_NOTEPAD=1`, `WS_REPORT_DIR=<dir>`; bootstrap: `WSL_NO_RELAUNCH=1`, `WSL_REPO_URL=<git url>`,
+`WSL_CLONE_DIR=<dir>` (the launcher's clone elsewhere than `%LOCALAPPDATA%\WindowSmashLauncher`).
 The kit reads answers from stdin when it is redirected (`printf 'o\r\n...' | cmd //c "...bat" install`).
+
+**Never fake `LOCALAPPDATA` to isolate a test.** On 2026-10-19 a test did, and the kit's `Find-Python` probe ran
+`python` (the Python install manager's alias): the manager found no runtime under the fake folder, silently
+auto-installed Python 3.15 there, and re-synced its registrations for the whole user - it added a PEP 514 key
+`HKCU\Software\Python\PythonCore\3.15`, an "Installed apps" entry `HKCU\...\Uninstall\pymanager-pythoncore-3.15-64`
+and Start menu shortcuts, all pointing into the test folder, and removed the real 3.14's key, entry and shortcuts
+(the legacy `py.exe` then started the test's 3.15). Repaired by deleting the 3.15 entries (plus the shortcut-cache
+values naming them in `HKCU\...\UFH\SHC`) and running `pymanager install --refresh` with the real environment. Use
+`WSL_CLONE_DIR` / `WSL_REPO_URL` instead. The same auto-install can happen on a friend's PC that has the install
+manager but no runtime: `py -3.14` installs 3.14 (wanted), `python` would install the newest one.
 
 ## 12. Kit history and tests
 
@@ -385,6 +396,11 @@ The kit reads answers from stdin when it is redirected (`printf 'o\r\n...' | cmd
 - Test without touching the owner's install: a fresh clone elsewhere plus `WS_NO_BUILD=1`, `WS_NO_NOTEPAD=1`,
   `WS_REPORT_DIR=<scratch>`, stdin answers; restore `%LOCALAPPDATA%\WindowSmash-setup\repo.txt` afterwards (it must
   point to `D:\WindowSmash`).
+- Test the bootstrap's update path: `git clone --bare` this repository to a scratch folder, run a copy of the .bat
+  with `WSL_REPO_URL=<bare>` and `WSL_CLONE_DIR=<scratch clone>` once (first clone), push a commit that changes the
+  .bat's header to the bare repository, run the old copy again: expect "Launcher mis à jour", the copy refreshed,
+  a restart in a new window, and no stray cmd.exe errors in the old window (that would mean the one-block invariant
+  broke).
 
 ## 14. Open items, gaps, ideas
 

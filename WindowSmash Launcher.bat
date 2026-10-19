@@ -36,12 +36,13 @@ exit /b !RC!
 #    new window (WSL_RELAUNCHED stops a second restart).
 # 5. kit\ws_setup.ps1 of the repository does the rest (install, play, diag, unlock, optimize).
 # Exit codes for the .bat: 0 done, 10 a failure already reported (it paused), 20 restarted in a new window.
-# Test-only environment: WSL_NO_RELAUNCH=1 (carry on in the same window after an update), WSL_REPO_URL (another remote).
+# Test-only environment: WSL_NO_RELAUNCH=1 (carry on in the same window after an update), WSL_REPO_URL (another remote),
+# WSL_CLONE_DIR (another clone folder; never fake LOCALAPPDATA instead, see memory.md).
 param([string]$Self = '', [string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
 $LauncherUrl = if ($env:WSL_REPO_URL) { $env:WSL_REPO_URL } else { 'https://github.com/Nilsix/WindowSmashLauncher.git' }
-$Clone   = Join-Path $env:LOCALAPPDATA 'WindowSmashLauncher'
+$Clone   = if ($env:WSL_CLONE_DIR) { $env:WSL_CLONE_DIR } else { Join-Path $env:LOCALAPPDATA 'WindowSmashLauncher' }
 $GIT_URL = 'https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-64-bit.exe'
 $GIT_SHA = '52188f917b378f00c70ec136bcf090005f30d44fbc4eba0bce759cc6592d60f6'
 $env:GIT_TERMINAL_PROMPT = '0'      # a public repository: fail with a message instead of asking for a login
