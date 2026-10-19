@@ -12,7 +12,8 @@
   fonts     SOURCE OUTDIR --keys DIR        the firmware's shared fonts (.bfttf): from an XCI's update partition or a
                                             folder of firmware NCAs (a dump, yuzu/suyu nand, Ryujinx bis)
   install   --tree T --update NSP --keys DIR --jobs N [--dlc DIR] [--no-build]
-                                            tools/install_version.py install, with the fix below
+                                            tools/install_version.py install (out of memory, link and full disk
+                                            told apart in its output)
   status    --tree T                        the version folder's state, for the report
   unlock    --tree T [--dry-run]            every fighter unlocked in the save (tools/unlock_all.py, 13.0.4 added)
   shaders   --tree T [--jobs N]             the game's shaders compiled ahead of time (tools/shader_aot.py)
@@ -20,10 +21,9 @@
 Lines for ws_setup.ps1: "@@JSON {...}", "@@WARN <code> <text>", "@@ERROR <code> <text>" (then exit 2; exit 3 is
 "the compiler ran out of memory": the caller retries with fewer jobs). Key values are never printed.
 
-The fix: WindowSmash's update.py (branch multi-version, commit 5682805) reads the update's hash table (IVFC level 5)
-from the patch alone. In the 13.0.4 update part of that table is original-release data, so Patch() fails with
-"bytes at 0x20080 come from the original release". Here the Patch starts without the table, and the table is read,
-before the RomFS step, with the base's bytes taken from the plain base NCA - the bytes the exact patch path uses.
+The 13.0.4 update reuses the original release's hashes for part of its hash table (IVFC level 5). WindowSmash's
+update.py up to commit adfb154 read that table from the patch alone and failed with "bytes at 0x20080 come from the
+original release"; kit 2.0 patched it here. Since commit c30efe3 update.py applies such an update as it is.
 """
 import argparse
 import json
@@ -436,37 +436,6 @@ def cmd_install(a):
     os.chdir(a.repo)
     os.environ["PYTHONUNBUFFERED"] = "1"
     import install_version
-    import update
-
-    init = update.Patch.__init__
-
-    def patch_init(self, nsp, keydir):
-        try:
-            init(self, nsp, keydir)
-        except LookupError as e:
-            print(f"update: table de hachage en partie dans le jeu de base ({e}); lue depuis la base", flush=True)
-            self.hashes = None
-            levels = [struct.unpack_from("<QQI", self.sec.fs_header[0x08:0x100], 0x10 + i * 0x18) for i in range(6)]
-            self.hash_at = levels[4][0]
-            self.l6, self.l6size, blocklog = levels[5]
-            self.block = 1 << blocklog
-            self.blocks = (self.l6size + self.block - 1) // self.block
-
-    apply_romfs = update.apply_romfs
-
-    def patched_apply_romfs(patch, base_cfg, keydir, tree):
-        if getattr(patch, "hashes", True) is None:
-            b = update.Builder(patch, base_cfg, keydir)
-            start = b.base_section()
-            if start is None:
-                raise Problem("E51", "la table de hachage de l'update a besoin du jeu de base ORIGINAL (1.0.0) en NCA "
-                                     "dechiffre: le jeu de base fourni n'est pas celui-la")
-            patch.hashes = patch.vread(patch.hash_at, patch.blocks * 32, lambda ph, n: b.base_read(start + ph, n))
-            print(f"update: table de hachage lue ({patch.blocks:,} blocs)", flush=True)
-        return apply_romfs(patch, base_cfg, keydir, tree)
-
-    update.Patch.__init__ = patch_init
-    update.apply_romfs = patched_apply_romfs
 
     seen = {"oom": False, "link": False, "disk": False}
 

@@ -10,18 +10,18 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '2.0 (2026-10-19)'
+$KitVersion = '2.1 (2026-10-19)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
 $WS_GIT_URL  = 'https://github.com/SNO2207/WindowSmash.git'
-$WS_COMMIT   = 'adfb15452825e18ac908ab229707f5b2aadde5fb'   # main, 2026-10-18: online lobby, SDL3 pads
+$WS_COMMIT   = 'c30efe345fa7f39fc5cf2e087dd616c918a17269'   # main, 2026-10-19: online lobby, SDL3 pads, codecs built from source, the 13.0.4 update applied as it is
 $WS_BRANCH   = 'main'
 $WS_ZIP      = "https://codeload.github.com/SNO2207/WindowSmash/zip/$WS_COMMIT"
 $WS_FILES    = @{   # SHA-256 (line ends as LF) of files of that commit: a copy without git is checked with them
     'tools\install_version.py' = '6bea66e87b9be7a0876b1194d9310ece9f539f42cb5e0c089b45f3d5412e52da'
-    'tools\update.py'          = '5d6cbe0f661fa6e9f289211f00101d80a1db855f249ce3ebcb4af71c653baf03'
-    'tools\recomp.py'          = '606a625bab9ad501e0514fdd1c354ba4b2ef12f8c16bb5c0bbbc357d7aaa15a0'
-    'tools\nca.py'             = '4736eb17d1ba9569d44d5894a6f08f5c4d1a4e5dcbf070bcc557974524a27a40'
+    'tools\update.py'          = '694f1e53c1752eea8774d5c858e21d851d622eb06f7da4ec1710bdb9574e40ce'
+    'tools\recomp.py'          = '0fc71e169fe286a5800e2e7a4eaf094b2253ee9904265204affe8de98c70d1b1'
+    'tools\nca.py'             = '5264ffebf4f74fad1a7766356cf438d9a2d325362241cb3c61c48e072fe570e4'
 }
 $EXPECT_VERSION = '13.0.4'
 $TREE           = 'v13.0.4'
