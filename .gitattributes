@@ -1,0 +1,6 @@
+# The Windows scripts are kept byte for byte (CRLF line ends, and the kit's UTF-8 BOM): cmd.exe and Windows
+# PowerShell 5.1 need them, also when the launcher is downloaded "raw" from GitHub.
+*.bat -text
+*.ps1 -text
+*.py text eol=lf
+*.md text eol=lf
