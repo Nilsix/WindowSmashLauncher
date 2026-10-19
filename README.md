@@ -77,4 +77,3 @@ sur ton Bureau. Envoie ce fichier tel quel : il ne contient ni clés ni fichiers
 - `WindowSmash Launcher.bat` : l'amorce (Git, clone et mise à jour de ce dépôt, redémarrage, puis le kit).
 - `kit/ws_setup.ps1` : l'installateur (PowerShell 5.1, doit rester en UTF-8 avec BOM).
 - `kit/ws_setup.py` : la partie Python (lecture des fichiers du jeu, correctifs pour la 13.0.4).
-- `memory.md` : tout le contexte technique (pour une session Claude Code ou un développeur).
