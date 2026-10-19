@@ -60,7 +60,10 @@ monde doit avoir exactement la même version**.
 3. Dans le jeu : **Local Wireless**. Un joueur crée une room, les autres la choisissent dans la liste.
    Aucun port à ouvrir, pas de VPN : tout passe par le lobby public `smash.recomps.wtf`.
 4. Rooms entre amis seulement : dans le dossier WindowSmash, ouvrez `online_server.txt` et ajoutez **le même
-   code** après l'adresse, chez tout le monde (exemple : `smash.recomps.wtf:39420 moncode`).
+   code** après l'adresse, chez tout le monde (exemple : `smash.recomps.wtf:39421 moncode`).
+5. Nouveau, encore en test : le mode **Online** du jeu. Menu principal, **Online**, **Smash**, **Quickplay** : il
+   trouve un autre joueur WindowSmash qui cherche en même temps. Garde le fichier `netplay_id.txt` du dossier
+   WindowSmash : c'est ton compte (ne le donne à personne).
 
 Touche **F1** en jeu : l'overlay doit afficher `Online`. **F11** : plein écran.
 

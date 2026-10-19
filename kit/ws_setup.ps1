@@ -10,11 +10,11 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '2.1 (2026-10-19)'
+$KitVersion = '2.2 (2026-10-19)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
 $WS_GIT_URL  = 'https://github.com/SNO2207/WindowSmash.git'
-$WS_COMMIT   = 'c30efe345fa7f39fc5cf2e087dd616c918a17269'   # main, 2026-10-19: online lobby, SDL3 pads, codecs built from source, the 13.0.4 update applied as it is
+$WS_COMMIT   = 'd9370506f9c944bb78ae44e1adb2c38396e6ddeb'   # main, 2026-10-19: online lobby (port 39421, the game's Online mode), SDL3 pads, codecs built from source, menus on AMD
 $WS_BRANCH   = 'main'
 $WS_ZIP      = "https://codeload.github.com/SNO2207/WindowSmash/zip/$WS_COMMIT"
 $WS_FILES    = @{   # SHA-256 (line ends as LF) of files of that commit: a copy without git is checked with them
@@ -545,6 +545,38 @@ function Find-Repo([bool]$allowClone) {
     return $freeGB
 }
 
+# online_server.txt is the one file of the repository a player edits: a lobby code after the address (NETPLAY.md).
+# git does not check out a version that changes it over such an edit, and the zip copy would erase it, so the player's
+# file is set aside first. On the public lobby the code goes back after the new version's address (its port moved
+# once, 39420 -> 39421, and players on two ports do not see each other); anything else (an own server, "off") gets the
+# player's file back as it was.
+function Get-ServerLine([string]$text) {
+    foreach ($l in ($text -split "`n")) { $t = $l.Trim(); if ($t -and -not $t.StartsWith('#')) { return $t } }
+    return $null
+}
+
+function Save-OnlineServer {
+    $p = Join-Path $Script:Repo 'online_server.txt'
+    if (Test-Path -LiteralPath $p) { return [IO.File]::ReadAllText($p) }
+    return $null
+}
+
+function Restore-OnlineServer([string]$mine) {
+    $p = Join-Path $Script:Repo 'online_server.txt'
+    if (-not $mine -or -not (Test-Path -LiteralPath $p)) { return }
+    $new = [IO.File]::ReadAllText($p)
+    if ($mine -eq $new) { return }
+    if ((Get-ServerLine $mine) -match '^smash\.recomps\.wtf:\d+(\s+(?<code>.+))?$') {
+        if (-not $Matches['code']) { return }      # no lobby code: the new version's file as it is
+        $re = New-Object Text.RegularExpressions.Regex '(?m)^(?![ \t]*#)([ \t]*[^\s#][^\r\n]*?)[ \t]*(?=\r?$)'
+        $text = $re.Replace($new, '$1 ' + $Matches['code'].Replace('$', '$$'), 1)
+    } else {
+        $text = $mine
+    }
+    [IO.File]::WriteAllText($p, $text, (New-Object Text.UTF8Encoding $false))
+    Say "  online_server.txt : ton réglage est gardé ($(Get-ServerLine $text))"
+}
+
 function Ensure-Revision {
     Title 'Version de WindowSmash'
     if (-not $Script:Git) { $Script:Git = Find-Git }
@@ -557,8 +589,12 @@ function Ensure-Revision {
         Say "  Passage à la version $($WS_COMMIT.Substring(0,7)) (branche $WS_BRANCH)..."
         Run-Native { & $Script:Git -C $Script:Repo fetch origin $WS_BRANCH }
         if ($LASTEXITCODE) { Set-Step 'Version' 'ÉCHEC' 'git fetch'; Fail 'E11' 'git fetch a échoué (internet ?)' }
+        $mine = Save-OnlineServer
+        Run-Native { & $Script:Git -C $Script:Repo checkout -- online_server.txt }   # (an edit there would block the checkout)
         Run-Native { & $Script:Git -C $Script:Repo -c advice.detachedHead=false checkout --detach $WS_COMMIT }
-        if ($LASTEXITCODE) { Set-Step 'Version' 'ÉCHEC' 'git checkout'; Fail 'E11' "git checkout $WS_COMMIT a échoué" }
+        $rc = $LASTEXITCODE
+        Restore-OnlineServer $mine
+        if ($rc) { Set-Step 'Version' 'ÉCHEC' 'git checkout'; Fail 'E11' "git checkout $WS_COMMIT a échoué" }
         $Script:Info['WindowSmash (git)'] = "$WS_COMMIT (était $head)"
         Ok 'version mise à jour'; Set-Step 'Version' 'OK' 'git checkout'; return
     }
@@ -569,7 +605,9 @@ function Ensure-Revision {
     }
     if (-not $bad) { Ok 'fichiers à la bonne version'; Set-Step 'Version' 'OK' 'fichiers vérifiés'; $Script:Info['WindowSmash'] = "copie sans git, = $($WS_COMMIT.Substring(0,7))"; return }
     Say "  Pas la bonne version ($($bad -join ', ')) : je mets les fichiers à jour..."
+    $mine = Save-OnlineServer
     Get-RepoZip $Script:Repo
+    Restore-OnlineServer $mine
     foreach ($f in $WS_FILES.Keys) {
         if ((Get-NormalizedSha256 (Join-Path $Script:Repo $f)) -ne $WS_FILES[$f]) { Set-Step 'Version' 'ÉCHEC' $f; Fail 'E11' "$f n'a pas la bonne version même après mise à jour" }
     }
