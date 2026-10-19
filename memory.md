@@ -81,7 +81,8 @@ Contents:
 | `D:\ssbu-recomp-data\windowsmash-setup-kit\` | The kit before this repository: `src\` (launcher.bat, ws_setup.ps1, ws_setup.py), `build_kit.py` (made one self-extracting .bat), `dist\`. Superseded by this repository (kit 2.0). |
 | `%LOCALAPPDATA%\WindowSmash-setup\` | Kit state: `logs\<time>\`, `inputs.json` (paths of the game files chosen last time), `repo.txt` (where WindowSmash is installed: `D:\WindowSmash`), `downloads\`. |
 | `%LOCALAPPDATA%\WindowSmashLauncher\` | The launcher's own clone of this repository (managed by the bootstrap; do not edit). |
-| Desktop | `Installer WindowSmash.bat` (old single-file kit 1.3, superseded), `Checkup PC - 19-10-2026.txt` (the PC checkup report). |
+| Desktop | `WindowSmash Launcher.bat` (this repository's launcher, downloaded from GitHub; it keeps itself current), `Smash Ultimate (WindowSmash).lnk` (the clone's launcher with `play`; icon from ssbu.exe), `Checkup PC - 19-10-2026.txt` (the PC checkup report). The old single-file kit 1.3 `Installer WindowSmash.bat` was removed from the Desktop on 2026-10-19; an identical copy stays in `D:\ssbu-recomp-data\windowsmash-setup-kit\dist\`. |
+| Start menu | `Smash Ultimate (WindowSmash).lnk` and `WindowSmash Launcher.lnk`, both on `%LOCALAPPDATA%\WindowSmashLauncher\WindowSmash Launcher.bat`. |
 
 ## 3. The game files and their identifiers
 
