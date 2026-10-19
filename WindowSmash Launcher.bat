@@ -48,6 +48,10 @@ $GIT_SHA = '52188f917b378f00c70ec136bcf090005f30d44fbc4eba0bce759cc6592d60f6'
 $env:GIT_TERMINAL_PROMPT = '0'      # a public repository: fail with a message instead of asking for a login
 $env:GCM_INTERACTIVE = 'never'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
+try {       # boot files left behind by windows closed with their X button
+    Get-ChildItem -LiteralPath (Split-Path $PSCommandPath -Parent) -Filter 'boot-*.ps1' |
+        Where-Object { $_.FullName -ne $PSCommandPath -and $_.LastWriteTime -lt (Get-Date).AddDays(-1) } | Remove-Item -Force
+} catch {}
 
 function Stop-Boot([string]$msg) {
     Write-Host ''
