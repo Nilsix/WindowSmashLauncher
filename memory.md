@@ -260,7 +260,9 @@ Bootstrap (`WindowSmash Launcher.bat`, boot.ps1):
 2. The repository clone in `%LOCALAPPDATA%\WindowSmashLauncher`: `git clone` the first time; then `git fetch` and,
    when `@{u}` differs from HEAD, `git reset --hard @{u}` (the folder belongs to the launcher). Offline: carries on.
 3. The file the user started (Desktop, Downloads...) is overwritten with the clone's `WindowSmash Launcher.bat` when
-   their contents differ (every run, not only after an update), so the user's copy stays current.
+   their contents differ (every run, not only after an update), so the user's copy stays current. Only when the
+   clone's copy is sound: CRLF everywhere and both `#@@BEGIN`/`#@@END boot.ps1` markers (`$repoOk`); the restart of
+   step 4 needs the same check, otherwise the kit runs in the current window.
 4. After a change or the first clone: starts the clone's `WindowSmash Launcher.bat` in a new window
    (`cmd /c ""<bat>" <mode>"`, env `WSL_RELAUNCHED=1` so the new instance does not restart again, `WSL_KITDIR` = the
    folder of the file the user started) and exits with 20 (the old window closes without pausing).
@@ -364,7 +366,20 @@ manager but no runtime: `py -3.14` installs 3.14 (wanted), `python` would instal
 - 1.3: latency 1 and shader precompilation after the build, menu option 5, more shader workers. Tested on the owner's
   installation (option 5 end to end, "OK"); the latency setter on three cases (3 -> 1, already 1, no file).
 - 2.0 (2026-10-19, this repository): the self-updating bootstrap; the kit runs from the clone; shortcuts go through
-  the launcher; play mode offers the update when the pinned commit changed.
+  the launcher; play mode offers the update when the pinned commit changed; the report names the launcher revision.
+  Bootstrap tests (2026-10-19, with a local bare remote, `WSL_REPO_URL` + `WSL_CLONE_DIR`, diag mode):
+  - first run: clone, kit diag, report, exit 0 (also against GitHub itself: the repository is public, anonymous
+    `git ls-remote` works, the raw download is byte-identical to the commit);
+  - update: a commit that adds a line to the .bat header (every later byte offset moves) pushed to the remote, the
+    old copy run again: "Launcher mis à jour (3a63512 -> 5a1fb5f)", the copy overwritten while it ran, "Redémarrage",
+    exit 0, no cmd.exe error in the old window; the new window ran the new version (kit log `KitDir` = the folder of
+    the original copy, report rewritten);
+  - a broken update (the .bat converted to LF) is refused: no copy, no restart, the kit runs in the same window;
+  - offline (remote unreachable): "Pas de connexion au dépôt du launcher", carries on;
+  - the pinned Git installer: SHA-256 matches, Authenticode valid (CN=Johannes Schindelin); winget knows `Git.Git`.
+  Found while testing: Git Bash's `awk` drops the CR of every line (a test copy made with it came out LF and cmd.exe
+  ran fragments of its lines: a `dir`, then "not recognized" errors; nothing harmful). Edit the .bat with tools that
+  keep CRLF (the Edit tool, Python in binary mode, `sed -b`).
 - Not tested on a clean PC: the installation of Git, Python and Build Tools (all present on the owner's PC), an NSP
   base with fonts from a firmware folder, a full compile through the kit (the same command as the owner's build).
 
