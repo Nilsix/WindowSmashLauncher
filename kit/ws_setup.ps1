@@ -1178,7 +1178,7 @@ try {
         $head = if ($g -and (Test-Path -LiteralPath (Join-Path $Script:Repo '.git'))) { (Run-Native { & $g -C $Script:Repo rev-parse HEAD }) | Select-Object -First 1 } else { $null }
         if ($head -and $head -ne $WS_COMMIT) {
             Say "  Nouvelle version de WindowSmash ($($head.Substring(0,7)) -> $($WS_COMMIT.Substring(0,7))) : pour jouer en ligne, il faut la même que tes amis."
-            if (Ask-YesNo '  Je fais la mise à jour maintenant ? (recompilation : 20 min à 1 h)') { $Mode = 'install' }
+            if (Ask-YesNo '  Je fais la mise à jour maintenant ? (recompilation : 20 min à 2 h selon la version et le PC)') { $Mode = 'install' }
         }
         if ($Mode -eq 'play') { Start-Game; exit 0 }
     }
