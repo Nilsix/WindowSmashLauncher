@@ -10,18 +10,18 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '2.2 (2026-10-19)'
+$KitVersion = '2.3 (2026-10-20)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
 $WS_GIT_URL  = 'https://github.com/SNO2207/WindowSmash.git'
-$WS_COMMIT   = 'd9370506f9c944bb78ae44e1adb2c38396e6ddeb'   # main, 2026-10-19: online lobby (port 39421, the game's Online mode), SDL3 pads, codecs built from source, menus on AMD
+$WS_COMMIT   = '9c1b250b1a6f581f905639c994ee0c7d58b333a8'   # main, 2026-10-20: online lobby (port 39421, the game's Online mode), the launcher window and the settings menu, render scale, GameCube controllers
 $WS_BRANCH   = 'main'
 $WS_ZIP      = "https://codeload.github.com/SNO2207/WindowSmash/zip/$WS_COMMIT"
 $WS_FILES    = @{   # SHA-256 (line ends as LF) of files of that commit: a copy without git is checked with them
-    'tools\install_version.py' = '6bea66e87b9be7a0876b1194d9310ece9f539f42cb5e0c089b45f3d5412e52da'
+    'tools\install_version.py' = '001ae585d0133a7a49c68f5dee47c87732cd84e72e85eaf079cd22d351e76fde'
     'tools\update.py'          = '694f1e53c1752eea8774d5c858e21d851d622eb06f7da4ec1710bdb9574e40ce'
-    'tools\recomp.py'          = '0fc71e169fe286a5800e2e7a4eaf094b2253ee9904265204affe8de98c70d1b1'
-    'tools\nca.py'             = '5264ffebf4f74fad1a7766356cf438d9a2d325362241cb3c61c48e072fe570e4'
+    'tools\recomp.py'          = '0752854703466ba2b6fb9afbff2b9d744526fc22235c16461be86bd1ec37fb32'
+    'tools\nca.py'             = 'dff2b794c2f773b06eb8fd391ad01e933c23de692a752333e48e268c834392cf'
 }
 $EXPECT_VERSION = '13.0.4'
 $TREE           = 'v13.0.4'
@@ -88,9 +88,10 @@ $InputsJs = Join-Path $HomeDir 'inputs.json'
 $RepoTxt  = Join-Path $HomeDir 'repo.txt'          # where WindowSmash was installed, for the next runs
 New-Item -ItemType Directory -Force $LogDir | Out-Null
 $Script:AutoInstall = $false; $Script:Git = $null
-# display.ini as the game writes it at its first start (WindowSmash adfb154), with latency 1
+# display.ini as the game writes it at its first start (WindowSmash 9c1b250), with latency 1
 $DisplayIni = @'
-; display.ini: the game's window and the pacing of its frames. Read when the game starts.
+; display.ini: the game's window and the pacing of its frames. Read when the game starts; the
+; settings menu (Esc in the game) changes it too.
 ; Delete this file to get it written again with the defaults. A line starting with ';' is a comment.
 
 ; window = windowed | borderless | fullscreen
@@ -114,6 +115,20 @@ pacing = clock
 latency = 1
 ; hide_cursor = 1: hide the mouse pointer over the game after 2 seconds without moving it.
 hide_cursor = 1
+; overlay = 1: show the frame rate in the corner from the start (F1 shows or hides it while playing).
+overlay = 1
+
+; render_scale = 1 | auto | a number from 0.5 to 4
+;   The game draws its pictures at 1920x1080. render_scale draws them this many times as wide and
+;   as tall: sharper on a bigger screen, more work for the graphics card (2 = four times the pixels).
+;   auto: as many pixels as the picture has in the window when the game starts (1.33 on a 2560x1440
+;   monitor with window = borderless), at least 1. A bigger picture than the window is shrunk to fit.
+render_scale = 1
+
+; gpu = auto, or part of a graphics card's name (e.g. nvidia, radeon, intel)
+;   auto: the fastest card. On a laptop with two, the NVIDIA or AMD one, not the processor's own.
+;   The game's log (build\play.log) lists the cards it found at its start.
+gpu = auto
 '@
 
 $Script:Repo = $null; $Script:VenvPy = $null; $Script:SysPy = $null; $Script:Deps = $null
@@ -545,7 +560,8 @@ function Find-Repo([bool]$allowClone) {
     return $freeGB
 }
 
-# online_server.txt is the one file of the repository a player edits: a lobby code after the address (NETPLAY.md).
+# online_server.txt is the one file of the repository a player edits: a lobby code after the address
+# (docs/MULTIPLAYER.md), by hand or, since WindowSmash 9c1b250, through the launcher window and the game's settings menu.
 # git does not check out a version that changes it over such an edit, and the zip copy would erase it, so the player's
 # file is set aside first. On the public lobby the code goes back after the new version's address (its port moved
 # once, 39420 -> 39421, and players on two ports do not see each other); anything else (an own server, "off") gets the
@@ -1019,10 +1035,12 @@ function Finish {
     Say ''
     Say "  Pour jouer : le raccourci 'Smash Ultimate (WindowSmash)' (il vérifie les mises à jour à chaque lancement)."
     Say "  Menu (installer, débloquer, optimiser, diagnostic) : le raccourci 'WindowSmash Launcher'."
-    Say '  En ligne : Play SSBU.bat rejoint le lobby public ; dans le jeu, Local Wireless liste les rooms de tous'
-    Say '  les joueurs de la même version (aucun port à ouvrir). Hors ligne : Play SSBU Offline.bat.'
-    Say '  Rooms entre amis seulement : ajoutez le même code après l''adresse dans online_server.txt'
-    Say '  (exemple : smash.recomps.wtf:39420 moncode).'
+    Say '  Au lancement, une fenêtre WindowSmash montre la version et les réglages (affichage, en ligne, manettes) :'
+    Say '  bouton Play pour jouer. Pendant le jeu, Échap ouvre le menu des réglages.'
+    Say '  En ligne : le lobby public ; dans le jeu, Local Wireless liste les rooms de tous les joueurs de la même'
+    Say '  version (aucun port à ouvrir), et Online > Smash > Quickplay cherche des adversaires (nouveau, en test).'
+    Say '  Rooms entre amis seulement : dans la fenêtre WindowSmash, "Private lobby" et le même code chez tout le monde.'
+    Say '  Hors ligne : "Offline" dans la même fenêtre.'
     Say '  FPS : si les shaders n''ont pas été précompilés, relance WindowSmash Launcher et choisis 5).'
     Say '  Clavier : flèches = stick, Z/X/C/V = A/B/X/Y, A/S = L/R, Q/W = ZL/ZR, Entrée = +, F1 = infos.'
     Say '  Tous les personnages : lance le jeu une fois, ferme-le, puis relance WindowSmash Launcher et choisis 4).'
@@ -1103,16 +1121,30 @@ function Ensure-OnlineName {
     Ok "pseudo : $n (modifiable dans online_name.txt)"
 }
 
+# Since WindowSmash 9c1b250, Play SSBU.bat first opens the game's own window (tools\launcher.ps1: game version,
+# display, online and controller settings); the game starts when Play is clicked there, so it may start long after
+# this call, and the window can also be closed without playing (exit code 0, nothing started). With "start the game
+# directly" ticked in it, or when it cannot open, the game starts at once as before. Whether the game was started is
+# told by its log: every way of starting it writes <version folder>\build\play.log anew.
 function Start-Game {
     $play = Join-Path $Script:Repo 'Play SSBU.bat'
+    $log = Join-Path $Script:Repo "$TREE\build\play.log"
     Ensure-OnlineName
     try {
-        Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', "`"$play`"" -WorkingDirectory $Script:Repo
-        Start-Sleep -Seconds 15
+        $t0 = Get-Date
+        $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', "`"$play`"" -WorkingDirectory $Script:Repo -PassThru
+        $null = $p.Handle      # (Windows PowerShell 5.1 loses the exit code of a process whose handle was never asked for)
+        Say '  La fenêtre WindowSmash s''ouvre (version du jeu, affichage, en ligne, manettes) : clique sur Play pour jouer.'
+        while (-not $p.HasExited -and -not (Get-Process ssbu -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 500 }
+        for ($i = 0; $i -lt 10 -and -not (Get-Process ssbu -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
         if (-not (Get-Process ssbu -ErrorAction SilentlyContinue)) {
-            $log = Join-Path $Script:Repo "$TREE\build\play.log"
-            Fail 'E70' "le jeu s'est fermé tout de suite" $log
+            if ((Test-Path -LiteralPath $log) -and (Get-Item -LiteralPath $log).LastWriteTime -ge $t0) { Fail 'E70' "le jeu s'est fermé tout de suite" $log }
+            if ($p.HasExited -and $p.ExitCode -eq 0) { Say '  Fenêtre fermée sans lancer le jeu.'; return }
+            $rc = if ($p.HasExited) { "code $($p.ExitCode)" } else { 'toujours ouvert' }
+            Fail 'E70' "le jeu n'a pas démarré (Play SSBU.bat : $rc)" $log
         }
+        Start-Sleep -Seconds 15
+        if (-not (Get-Process ssbu -ErrorAction SilentlyContinue)) { Fail 'E70' "le jeu s'est fermé tout de suite" $log }
         Ok 'jeu lancé (la première fois, l''écran peut rester noir pendant la vidéo d''intro)'
     } catch { Fail 'E70' "$($_.Exception.Message)" }
 }

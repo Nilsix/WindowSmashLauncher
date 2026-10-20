@@ -48,7 +48,7 @@ monde doit avoir exactement la même version**.
 | Choix | Ce qu'il fait |
 | :--- | :--- |
 | 1) Installer / reprendre | Installe tout, ou met à jour une installation existante. |
-| 2) Lancer le jeu | Lance le jeu en ligne. |
+| 2) Lancer le jeu | Ouvre la fenêtre WindowSmash (réglages), puis le jeu en ligne. |
 | 3) Diagnostic | Crée un rapport sans rien installer. |
 | 4) Débloquer tous les personnages | Après avoir lancé le jeu une fois puis l'avoir fermé. |
 | 5) Optimiser | Précompile les shaders (FPS stables) et met la latence d'affichage à 1. |
@@ -56,16 +56,19 @@ monde doit avoir exactement la même version**.
 ## Jouer en ligne
 
 1. Lance le jeu avec le raccourci. La première fois, il demande ton pseudo en ligne.
-2. Si Windows demande l'autorisation pour `ssbu.exe`, coche **Réseaux privés et publics**.
-3. Dans le jeu : **Local Wireless**. Un joueur crée une room, les autres la choisissent dans la liste.
+2. Une fenêtre **WindowSmash** s'ouvre : version du jeu, affichage (fenêtre ou plein écran, taille), en ligne,
+   manettes. Clique sur **Play**. (Case « Start the game directly » : le jeu démarre directement les fois
+   suivantes ; garde Maj enfoncée pendant le lancement pour revoir la fenêtre.)
+3. Si Windows demande l'autorisation pour `ssbu.exe`, coche **Réseaux privés et publics**.
+4. Dans le jeu : **Local Wireless**. Un joueur crée une room, les autres la choisissent dans la liste.
    Aucun port à ouvrir, pas de VPN : tout passe par le lobby public `smash.recomps.wtf`.
-4. Rooms entre amis seulement : dans le dossier WindowSmash, ouvrez `online_server.txt` et ajoutez **le même
-   code** après l'adresse, chez tout le monde (exemple : `smash.recomps.wtf:39421 moncode`).
-5. Nouveau, encore en test : le mode **Online** du jeu. Menu principal, **Online**, **Smash**, **Quickplay** : il
+5. Rooms entre amis seulement : dans la fenêtre WindowSmash, choisissez **Private lobby (a code)** et mettez
+   **le même code** chez tout le monde. Hors ligne : **Offline**.
+6. Nouveau, encore en test : le mode **Online** du jeu. Menu principal, **Online**, **Smash**, **Quickplay** : il
    trouve un autre joueur WindowSmash qui cherche en même temps. Garde le fichier `netplay_id.txt` du dossier
    WindowSmash : c'est ton compte (ne le donne à personne).
 
-Touche **F1** en jeu : l'overlay doit afficher `Online`. **F11** : plein écran.
+En jeu : **Échap** ouvre le menu des réglages, **F1** l'overlay (il doit afficher `Online`), **F11** le plein écran.
 
 Clavier : flèches = stick, Z/X/C/V = A/B/X/Y, A/S = L/R, Q/W = ZL/ZR, Entrée = +.
 Les manettes (Xbox, PlayStation, Switch Pro...) marchent directement.
@@ -79,4 +82,4 @@ sur ton Bureau. Envoie ce fichier tel quel : il ne contient ni clés ni fichiers
 
 - `WindowSmash Launcher.bat` : l'amorce (Git, clone et mise à jour de ce dépôt, redémarrage, puis le kit).
 - `kit/ws_setup.ps1` : l'installateur (PowerShell 5.1, doit rester en UTF-8 avec BOM).
-- `kit/ws_setup.py` : la partie Python (lecture des fichiers du jeu, correctifs pour la 13.0.4).
+- `kit/ws_setup.py` : la partie Python (lecture des fichiers du jeu, déblocage des personnages en 13.0.4).

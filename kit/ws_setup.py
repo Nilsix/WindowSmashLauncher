@@ -508,10 +508,10 @@ def cmd_shaders(a):
     """tools/shader_aot.py on the version folder: every shader of data.arc compiled ahead of time into its cache, so
     that a first use loads it instead of compiling it during play (the FPS drops of a first match).
 
-    shader_aot.py (commit adfb154) builds its compiler tool as <port>/build/shaderaot.exe and runs the compiler with
+    shader_aot.py up to commit d937050 builds its compiler tool as <port>/build/shaderaot.exe and runs the compiler with
     that folder as working directory; with only a version folder built, <port>/build does not exist and it stops with
-    "NotADirectoryError [WinError 267]". The folder is made here first (it is ignored by git, and holds no ssbu.exe,
-    so the launchers do not list it as a version)."""
+    "NotADirectoryError [WinError 267]" (since 9c1b250 it makes the folder itself). The folder is made here first (it
+    is ignored by git, and holds no ssbu.exe, so the launchers do not list it as a version)."""
     tools(a.repo)
     os.makedirs(os.path.join(a.repo, "build"), exist_ok=True)
     cmd = [sys.executable, "-u", os.path.join(a.repo, "tools", "shader_aot.py"), "--tree", os.path.join(a.repo, a.tree),
