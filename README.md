@@ -1,7 +1,7 @@
 # WindowSmash Launcher
 
 Un seul fichier pour installer, mettre à jour et lancer **WindowSmash** : Super Smash Bros. Ultimate en version
-PC native (une recompilation du jeu Switch, projet [SNO2207/WindowSmash](https://github.com/SNO2207/WindowSmash)),
+PC native (une recompilation du jeu Switch, projet [OpenSmash-Ultimate/WindowSmash](https://github.com/OpenSmash-Ultimate/WindowSmash)),
 avec le jeu en ligne entre amis.
 
 Tout est construit sur ton PC à partir de **tes propres fichiers**, dumpés de ta console. Ce dépôt ne contient
@@ -15,7 +15,7 @@ aucun fichier du jeu, aucune clé, aucun firmware.
 - Internet (téléchargement des outils : Git, Python, outils Microsoft, compilateur).
 - **Tes fichiers**, dumpés de ta Switch :
   - le jeu de base Smash Ultimate **1.0.0** (`.xci` ou `.nsp`) ;
-  - la mise à jour **13.0.4** (`.nsp`) ;
+  - la mise à jour **13.0.5** (`.nsp`) : WindowSmash ne marche qu'avec cette version ;
   - ton fichier **`prod.keys`** (Lockpick_RCM).
 
 ## Installation
@@ -42,6 +42,11 @@ relancer le launcher : il reprend où il en était.
 Automatiques : à chaque lancement, le launcher se met à jour tout seul (et redémarre s'il a changé). Si une
 nouvelle version de WindowSmash est choisie, il propose de la recompiler avant de jouer : en ligne, **tout le
 monde doit avoir exactement la même version**.
+
+Depuis octobre 2026, WindowSmash ne marche qu'avec la mise à jour **13.0.5** du jeu. Si tu avais installé avec la
+13.0.4 : dumpe la 13.0.5 depuis ta Switch à jour, lance le launcher, accepte la mise à jour et choisis le fichier
+13.0.5 quand il le demande. Ta sauvegarde est reprise ; l'ancien dossier `v13.0.4` peut ensuite être supprimé
+(le launcher le propose).
 
 ## Le menu
 
@@ -82,4 +87,5 @@ sur ton Bureau. Envoie ce fichier tel quel : il ne contient ni clés ni fichiers
 
 - `WindowSmash Launcher.bat` : l'amorce (Git, clone et mise à jour de ce dépôt, redémarrage, puis le kit).
 - `kit/ws_setup.ps1` : l'installateur (PowerShell 5.1, doit rester en UTF-8 avec BOM).
-- `kit/ws_setup.py` : la partie Python (lecture des fichiers du jeu, déblocage des personnages en 13.0.4).
+- `kit/ws_setup.py` : la partie Python (lecture des fichiers du jeu, puis compilation par `tools/build_game.py` de
+  WindowSmash).

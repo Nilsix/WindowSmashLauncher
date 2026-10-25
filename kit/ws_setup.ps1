@@ -10,21 +10,22 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '2.3 (2026-10-20)'
+$KitVersion = '3.0 (2026-10-25)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
-$WS_GIT_URL  = 'https://github.com/SNO2207/WindowSmash.git'
-$WS_COMMIT   = '9c1b250b1a6f581f905639c994ee0c7d58b333a8'   # main, 2026-10-20: online lobby (port 39421, the game's Online mode), the launcher window and the settings menu, render scale, GameCube controllers
+# (the project moved from github.com/SNO2207 to github.com/OpenSmash-Ultimate on 2026-10-21; the old address forwards)
+$WS_GIT_URL  = 'https://github.com/OpenSmash-Ultimate/WindowSmash.git'
+$WS_COMMIT   = '8025b483b0443adb5668395eca31f9250e8c8efb'   # main, 2026-10-24: game 13.0.5 only, built by tools\build_game.py in the WindowSmash folder itself
 $WS_BRANCH   = 'main'
-$WS_ZIP      = "https://codeload.github.com/SNO2207/WindowSmash/zip/$WS_COMMIT"
+$WS_ZIP      = "https://codeload.github.com/OpenSmash-Ultimate/WindowSmash/zip/$WS_COMMIT"
 $WS_FILES    = @{   # SHA-256 (line ends as LF) of files of that commit: a copy without git is checked with them
-    'tools\install_version.py' = '001ae585d0133a7a49c68f5dee47c87732cd84e72e85eaf079cd22d351e76fde'
-    'tools\update.py'          = '694f1e53c1752eea8774d5c858e21d851d622eb06f7da4ec1710bdb9574e40ce'
-    'tools\recomp.py'          = '0752854703466ba2b6fb9afbff2b9d744526fc22235c16461be86bd1ec37fb32'
-    'tools\nca.py'             = 'dff2b794c2f773b06eb8fd391ad01e933c23de692a752333e48e268c834392cf'
+    'tools\build_game.py' = 'f152e4e3a5b32b147e383a94a091e7328a1256b9b2cd0365e3f5e679a72fe4e1'
+    'tools\update.py'     = '895ce9ee48621a194613ad60fe48ce6aa19db54b1832ce040531c0f04ff687d2'
+    'tools\recomp.py'     = 'da89c88b19baa137e63957a753befb359fea3c878dd7d3415e165700333d6cf4'
+    'tools\nca.py'        = 'dff2b794c2f773b06eb8fd391ad01e933c23de692a752333e48e268c834392cf'
 }
-$EXPECT_VERSION = '13.0.4'
-$TREE           = 'v13.0.4'
+$EXPECT_VERSION = '13.0.5'      # the only game version WindowSmash builds and plays since its commit ec8a8b5
+$OLD_TREE       = 'v13.0.4'     # where kit 2.x built 13.0.4 (a version folder): its save comes over, then it can go
 $LLVM_VER  = '20.1.8'
 $LLVM_URL  = 'https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.8/clang%2Bllvm-20.1.8-x86_64-pc-windows-msvc.tar.xz'
 $LLVM_SHA  = 'f229769f11d6a6edc8ada599c0cda964b7dee6ab1a08c6cf9dd7f513e85b107f'
@@ -58,7 +59,7 @@ $Hints = @{
     'E40' = "Un fichier demandé n'a pas été choisi. Relance et choisis-le."
     'E41' = "Problème avec prod.keys : il faut celui dumpé de TA console à jour (Lockpick_RCM)."
     'E42' = "Le jeu de base ne convient pas : il faut Super Smash Bros. Ultimate 1.0.0 (.xci ou .nsp), pas une mise à jour."
-    'E43' = "La mise à jour ne convient pas : il faut l'update $EXPECT_VERSION de Smash Ultimate (.nsp)."
+    'E43' = "La mise à jour ne convient pas : WindowSmash demande l'update $EXPECT_VERSION de Smash Ultimate (.nsp), dumpée de ta Switch à jour."
     'E44' = "Ticket manquant ou lié à ta console : redumpe avec nxdumptool en cochant 'remove console specific data', ou donne un title.keys."
     'E45' = "Polices du firmware introuvables : choisis le dossier du firmware de ta console ou d'un émulateur (fichiers .nca)."
     'E50' = "La copie déchiffrée du jeu de base a échoué (disque plein ? fichier abîmé ?)."
@@ -88,7 +89,7 @@ $InputsJs = Join-Path $HomeDir 'inputs.json'
 $RepoTxt  = Join-Path $HomeDir 'repo.txt'          # where WindowSmash was installed, for the next runs
 New-Item -ItemType Directory -Force $LogDir | Out-Null
 $Script:AutoInstall = $false; $Script:Git = $null
-# display.ini as the game writes it at its first start (WindowSmash 9c1b250), with latency 1
+# display.ini as the game writes it at its first start (WindowSmash 8025b48), with latency 1
 $DisplayIni = @'
 ; display.ini: the game's window and the pacing of its frames. Read when the game starts; the
 ; settings menu (Esc in the game) changes it too.
@@ -231,8 +232,8 @@ function Write-Report([string]$status, [string]$code = '', [string]$message = ''
     foreach ($k in $Script:Info.Keys) { & $add ("  {0,-22} {1}" -f $k, (Redact ([string]$Script:Info[$k]))) }
     if ($Script:Repo -and $Script:VenvPy -and (Test-Path -LiteralPath $Script:VenvPy)) {
         try {
-            $st = Invoke-Helper @('status', '--tree', $TREE)
-            if ($st.Json) { & $add ''; & $add '--- État du dossier de version'; & $add (Redact ($st.Json | ConvertTo-Json -Compress -Depth 4)) }
+            $st = Invoke-Helper @('status')
+            if ($st.Json) { & $add ''; & $add '--- État du jeu dans le dossier WindowSmash'; & $add (Redact ($st.Json | ConvertTo-Json -Compress -Depth 4)) }
         } catch {}
     }
     if ($Script:LastLog) {
@@ -471,7 +472,7 @@ function Show-Prereqs {
         Log ("PREREQ {0} = {1}" -f $r[0], $r[1])
     }
     $Script:Info['winget'] = if (Get-Command winget -ErrorAction SilentlyContinue) { 'oui' } else { 'non (téléchargements directs)' }
-    Say '  Ensuite : copie de ton jeu, mise à jour 13.0.4, compilation (1 à 3 heures).'
+    Say "  Ensuite : copie de ton jeu, mise à jour $EXPECT_VERSION, compilation (1 à 3 heures)."
     if ($missing) {
         if (-not (Ask-YesNo "  J'installe ce qui manque ($missing élément(s)) puis tout le reste, sans reposer de question ?")) {
             Set-Step 'Outils' 'ÉCHEC' 'refusé'; Fail 'E15' 'installation des outils refusée'
@@ -807,14 +808,24 @@ function Save-Inputs { $Script:Inputs | ConvertTo-Json | Set-Content -LiteralPat
 function Ask-Inputs {
     Title 'Fichiers du jeu (les tiens, dumpés de ta console)'
     $prev = Load-Inputs
-    if ($prev -and $prev.base -and (Test-Path -LiteralPath $prev.base) -and (Test-Path -LiteralPath $prev.update) -and (Test-Path -LiteralPath $prev.prodkeys)) {
+    $have = { param($p) $p -and (Test-Path -LiteralPath $p) }
+    if ($prev -and (& $have $prev.base) -and (& $have $prev.prodkeys)) {
+        # (an update checked as the version needed now is reused; kit 2.x's 13.0.4 one is not: the new one is asked)
+        $upd = if ((& $have $prev.update) -and $prev.update_version -eq $EXPECT_VERSION) { $prev.update } else { $null }
         Say "  Fichiers choisis la dernière fois :"
         Say "    jeu de base : $($prev.base)"
-        Say "    mise à jour : $($prev.update)"
+        if ($upd) { Say "    mise à jour : $upd" }
         Say "    prod.keys   : $($prev.prodkeys)"
         if ($prev.dlc) { Say "    DLC         : $($prev.dlc)" }
         if (Ask-YesNo '  Je les réutilise ?') {
-            $Script:Inputs = @{ base = $prev.base; update = $prev.update; prodkeys = $prev.prodkeys; titlekeys = $prev.titlekeys; dlc = $prev.dlc; firmware = $prev.firmware }
+            $Script:Inputs = @{ base = $prev.base; update = $upd; prodkeys = $prev.prodkeys; titlekeys = $prev.titlekeys; dlc = $prev.dlc; firmware = $prev.firmware; update_version = $prev.update_version }
+            if (-not $upd) {
+                Say "  WindowSmash demande maintenant la mise à jour $EXPECT_VERSION du jeu (dumpée de ta Switch à jour)."
+                $u = Pick-File "Choisis la MISE À JOUR $EXPECT_VERSION de Smash Ultimate (.nsp)" 'Mise à jour (*.nsp)|*.nsp|Tous les fichiers|*.*' $prev.base
+                if (-not $u) { Fail 'E40' "mise à jour $EXPECT_VERSION non choisie" }
+                $Script:Inputs.update = $u; $Script:Inputs.update_version = $null
+                Save-Inputs
+            }
             return
         }
     }
@@ -855,14 +866,18 @@ function Check-Inputs {
     Ok "jeu de base : $($b.Json.kind.ToUpper()) version $($b.Json.display)"
     $u = Helper-OrFail @('identify', $Script:Inputs.update, '--keys', $keys, '--role', 'update', '--expect', $EXPECT_VERSION) 'E43'
     $Script:Info['Mise à jour'] = "{0} ({1:N1} Go) : version {2} (v{3})" -f (Split-Path $Script:Inputs.update -Leaf), ((Get-Item -LiteralPath $Script:Inputs.update).Length / 1GB), $u.Json.display, $u.Json.title_version
-    Ok "mise à jour : version $($u.Json.display)"
-    if ($u.Json.display -ne $EXPECT_VERSION -and -not (Ask-YesNo "  Ce n'est pas la $EXPECT_VERSION : le netplay avec l'hôte ne marchera pas. Continuer quand même ?" $false)) {
-        Fail 'E43' "mise à jour $($u.Json.display) au lieu de $EXPECT_VERSION"
+    if ($u.Json.display -ne $EXPECT_VERSION) {   # (WindowSmash builds and plays this version only)
+        Set-Step 'Fichiers' 'ÉCHEC' "update $($u.Json.display)"
+        Fail 'E43' "mise à jour $($u.Json.display) : WindowSmash demande la $EXPECT_VERSION"
     }
+    Ok "mise à jour : version $($u.Json.display)"
+    $Script:Inputs.update_version = $u.Json.display; Save-Inputs
+    # space: the decrypted base (unless it is there already), the update's data (~4 GB), the build (~10 GB)
     $free = (Get-Item -LiteralPath $Script:Repo).PSDrive.Free
-    $need = [int64]$b.Json.program_size + 20GB
-    if ($free -lt $need -and -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'dump\base\program_v0.nca'))) {
-        Set-Step 'Fichiers' 'ÉCHEC' 'disque'; Fail 'E22' ("il faut {0:N0} Go libres, il y en a {1:N0}" -f ($need / 1GB), ($free / 1GB))
+    $need = 16GB + $(if (Test-Path -LiteralPath (Join-Path $Script:Repo 'dump\base\program_v0.nca')) { 0 } else { [int64]$b.Json.program_size })
+    if ($free -lt $need -and -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) {
+        $hint = if (Test-Path -LiteralPath (Join-Path $Script:Repo $OLD_TREE)) { " (l'ancien dossier $OLD_TREE peut être supprimé : copie d'abord son dossier save)" } else { '' }
+        Set-Step 'Fichiers' 'ÉCHEC' 'disque'; Fail 'E22' ("il faut {0:N0} Go libres, il y en a {1:N0}{2}" -f ($need / 1GB), ($free / 1GB), $hint)
     }
     Set-Step 'Fichiers' 'OK' "$($b.Json.kind) $($b.Json.display) + update $($u.Json.display)"
 }
@@ -871,10 +886,7 @@ function Prepare-Base {
     Title 'Copie déchiffrée du jeu de base (environ 15 Go, 5 à 15 minutes)'
     $out = Join-Path $Script:Repo 'dump\base\program_v0.nca'
     Helper-OrFail @('plain-nca', $Script:Inputs.base, $out, '--keys', $Script:Keys) 'E50' -Live -name 'plain-nca' | Out-Null
-    $cfg = Join-Path $Script:Repo 'dump\modules\romfs.cfg'
-    $rc = Run-Logged $Script:VenvPy @((Join-Path $Script:Repo 'tools\nca.py'), 'romfs-cfg', $out, '--keys', $Script:Keys, '--out', $cfg) 'romfs-cfg'
-    if ($rc -ne 0) { Set-Step 'Jeu de base' 'ÉCHEC' 'romfs.cfg'; Fail 'E50' "romfs.cfg n'a pas pu être écrit (code $rc)" }
-    Ok 'jeu de base prêt'
+    Ok 'jeu de base prêt (WindowSmash le lit sur place : pas de seconde copie)'
     Set-Step 'Jeu de base' 'OK'
 }
 
@@ -977,7 +989,7 @@ function Build-Game {
     Say '  Laisse le PC allumé. Tu peux relancer WindowSmash Launcher si ça s''arrête : ça reprend où ça en était.'
     $env:SSBU_CLANG = $Script:Clang
     $Script:Info['Compilation'] = "jobs $jobs, SSBU_OPUS_LIBS=$([bool]$env:SSBU_OPUS_LIBS)"
-    $hargs = @('install', '--tree', $TREE, '--update', $Script:Inputs.update, '--keys', $Script:Keys)
+    $hargs = @('install', '--update', $Script:Inputs.update, '--keys', $Script:Keys)
     if ($Script:Inputs.dlc) { $hargs += @('--dlc', $Script:Inputs.dlc) }
     if ($env:WS_NO_BUILD) { $hargs += '--no-build'; Warn 'W99 test : compilation sautée (WS_NO_BUILD)' }   # (tests only)
     $attempt = 0
@@ -997,7 +1009,7 @@ function Build-Game {
         Set-Step 'Compilation' 'ÉCHEC' "$c"
         Fail $c $t
     }
-    $exe = Join-Path $Script:Repo "$TREE\build\ssbu.exe"
+    $exe = Join-Path $Script:Repo 'build\ssbu.exe'
     if ($env:WS_NO_BUILD) { Set-Step 'Compilation' 'TEST' 'sautée (WS_NO_BUILD)'; return }
     if (-not (Test-Path -LiteralPath $exe)) { Set-Step 'Compilation' 'ÉCHEC' 'exe absent'; Fail 'E62' "$exe introuvable" }
     $Script:Info['ssbu.exe'] = "{0:N0} Mo" -f ((Get-Item -LiteralPath $exe).Length / 1MB)
@@ -1005,12 +1017,41 @@ function Build-Game {
     Set-Step 'Compilation' 'OK' "$attempt tentative(s)"
 }
 
+# Kit 2.x built 13.0.4 in a version folder; once 13.0.5 is built, that folder only takes space (its build alone is
+# several GB). Its save came over at the build (ws_setup.py install); a copy of it goes to save_backups first, so no
+# save is lost even where the two differ. A folder holding a junction or link is kept: deleting it with PowerShell 5.1
+# could go into what the link points to.
+function Remove-OldTree {
+    $old = Join-Path $Script:Repo $OLD_TREE
+    if ($env:WS_NO_BUILD -or -not (Test-Path -LiteralPath $old) -or -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) { return }
+    Title "Ancien dossier $OLD_TREE"
+    $files = @(Get-ChildItem -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue)
+    if ($files | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) { Say "  Gardé (il contient un lien) : tu peux supprimer $old à la main."; return }
+    $size = ($files | Where-Object { -not $_.PSIsContainer } | Measure-Object Length -Sum).Sum / 1GB
+    Say ("  Il contient le jeu en 13.0.4 ({0:N1} Go), qui ne sert plus : ta sauvegarde a été reprise dans le dossier WindowSmash." -f $size)
+    if (-not (Ask-YesNo '  Je le supprime ? (une copie de son ancienne sauvegarde reste dans save_backups)')) { Say "  Gardé : tu peux supprimer $old à la main."; return }
+    $oldSave = Join-Path $old 'save'
+    if (Test-Path -LiteralPath $oldSave) {
+        $bk = Join-Path $Script:Repo "save_backups\$OLD_TREE-save-$Stamp"
+        New-Item -ItemType Directory -Force $bk | Out-Null
+        Copy-Item -Path (Join-Path $oldSave '*') -Destination $bk -Recurse -Force
+        $n1 = @(Get-ChildItem -LiteralPath $oldSave -Recurse -File -Force).Count
+        $n2 = @(Get-ChildItem -LiteralPath $bk -Recurse -File -Force).Count
+        if ($n2 -lt $n1) { Warn "W13 copie de l'ancienne sauvegarde incomplète ($n2 fichiers sur $n1) : $old gardé"; return }
+        Ok "ancienne sauvegarde copiée dans $bk"
+    }
+    try {
+        Remove-Item -LiteralPath $old -Recurse -Force
+        Ok ("{0} supprimé ({1:N1} Go libérés)" -f $OLD_TREE, $size)
+    } catch { Warn "W22 $OLD_TREE pas entièrement supprimé ($($_.Exception.Message)) : supprime-le à la main" }
+}
+
 function Finish {
     Title 'Terminé'
     $play = Join-Path $Script:Repo 'Play SSBU.bat'
     if (Ask-YesNo '  Je crée les raccourcis (Bureau et menu Démarrer) pour lancer le jeu ?') {
         $launcher = Join-Path $env:LOCALAPPDATA 'WindowSmashLauncher\WindowSmash Launcher.bat'
-        $exe = Join-Path $Script:Repo "$TREE\build\ssbu.exe"
+        $exe = Join-Path $Script:Repo 'build\ssbu.exe'
         foreach ($dir in @($Desktop, [Environment]::GetFolderPath('Programs'))) {
             try {
                 $sh = New-Object -ComObject WScript.Shell
@@ -1075,7 +1116,7 @@ function Precompile-Shaders([bool]$fatal) {
     $env:SSBU_CLANG = $Script:Clang
     $cpu = (Get-CimInstance Win32_Processor | Measure-Object NumberOfLogicalProcessors -Sum).Sum
     $jobs = [int][math]::Max(1, $cpu - 2)      # one worker per thread, two left for the PC (Discord, the system)
-    $r = Invoke-Helper @('shaders', '--tree', $TREE, '--jobs', "$jobs") -Live -name 'shaders'
+    $r = Invoke-Helper @('shaders', '--jobs', "$jobs") -Live -name 'shaders'
     if ($r.Code -ne 0) {
         $m = if ($r.ErrText) { $r.ErrText } else { "code $($r.Code)" }
         Set-Step 'Shaders' 'ÉCHEC' $m
@@ -1088,7 +1129,7 @@ function Precompile-Shaders([bool]$fatal) {
 function Optimize-Only {
     Title 'Optimisation : latence 1 et shaders précompilés'
     $null = Find-Repo $false
-    if (-not $Script:Repo -or -not (Test-Path -LiteralPath (Join-Path $Script:Repo "$TREE\build\ssbu.exe"))) { Say '  Le jeu n''est pas encore installé : choisis 1) Installer.'; return }
+    if (-not $Script:Repo -or -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) { Say "  Le jeu n'est pas encore installé en $EXPECT_VERSION : choisis 1) Installer."; return }
     $Script:VenvPy = Join-Path $Script:Repo '.venv\Scripts\python.exe'
     if (-not (Test-Path -LiteralPath $Script:VenvPy)) { Fail 'E85' 'environnement Python introuvable : relance 1) Installer' }
     Ensure-LLVM      # the compiler shader_aot needs: already there, or downloaded again
@@ -1099,10 +1140,10 @@ function Optimize-Only {
 function Unlock-Fighters {
     Title 'Déblocage de tous les personnages'
     $null = Find-Repo $false
-    if (-not $Script:Repo -or -not (Test-Path -LiteralPath (Join-Path $Script:Repo "$TREE\build\ssbu.exe"))) { Say '  Le jeu n''est pas encore installé : choisis 1) Installer.'; return }
+    if (-not $Script:Repo -or -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) { Say "  Le jeu n'est pas encore installé en $EXPECT_VERSION : choisis 1) Installer."; return }
     if (Get-Process ssbu -ErrorAction SilentlyContinue) { Fail 'E80' 'le jeu tourne : ferme-le d''abord (il réécrit sa sauvegarde en quittant)' }
     $Script:VenvPy = Join-Path $Script:Repo '.venv\Scripts\python.exe'
-    $r = Invoke-Helper @('unlock', '--tree', $TREE)
+    $r = Invoke-Helper @('unlock')
     foreach ($l in $r.Lines) { if ($l -notlike '@@*') { Say "  $l" } }
     if ($r.Code -ne 0) { $t = if ($r.ErrText) { $r.ErrText } else { "code $($r.Code)" }; Fail 'E80' $t }
     Ok 'personnages débloqués (une copie de la sauvegarde d''avant est dans save_backups)'
@@ -1128,7 +1169,7 @@ function Ensure-OnlineName {
 # told by its log: every way of starting it writes <version folder>\build\play.log anew.
 function Start-Game {
     $play = Join-Path $Script:Repo 'Play SSBU.bat'
-    $log = Join-Path $Script:Repo "$TREE\build\play.log"
+    $log = Join-Path $Script:Repo 'build\play.log'
     Ensure-OnlineName
     try {
         $t0 = Get-Date
@@ -1155,7 +1196,7 @@ try {
     Write-Host "Installation de WindowSmash (Super Smash Bros. Ultimate natif) - kit $KitVersion" -ForegroundColor Cyan
     Write-Host 'Ce programme installe tout : les outils nécessaires (Git, Python, outils Microsoft, compilateur),'
     Write-Host 'WindowSmash, puis le jeu à partir de TES fichiers : jeu de base 1.0.0 (.xci ou .nsp),'
-    Write-Host 'mise à jour 13.0.4 (.nsp) et prod.keys, dumpés de ta console.'
+    Write-Host "mise à jour $EXPECT_VERSION (.nsp) et prod.keys, dumpés de ta console."
     Log "kit $KitVersion, KitDir=$KitDir, Mode=$Mode"
     if (-not $KitDir) { $KitDir = (Get-Location).Path }
     if ($KitDir.Length -gt 3) { $KitDir = $KitDir.TrimEnd('\') }
@@ -1173,11 +1214,16 @@ try {
     Probe-System
     if ($Mode -eq 'play') {
         $null = Find-Repo $false
-        if (-not $Script:Repo -or -not (Test-Path -LiteralPath (Join-Path $Script:Repo "$TREE\build\ssbu.exe"))) { Say '  Le jeu n''est pas encore installé : choisis 1) Installer.'; Read-Host 'Entrée pour fermer'; exit 1 }
+        $built = $Script:Repo -and ((Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe')) -or (Test-Path -LiteralPath (Join-Path $Script:Repo "$OLD_TREE\build\ssbu.exe")))
+        if (-not $built) { Say '  Le jeu n''est pas encore installé : choisis 1) Installer.'; Read-Host 'Entrée pour fermer'; exit 1 }
         $g = Find-Git
         $head = if ($g -and (Test-Path -LiteralPath (Join-Path $Script:Repo '.git'))) { (Run-Native { & $g -C $Script:Repo rev-parse HEAD }) | Select-Object -First 1 } else { $null }
         if ($head -and $head -ne $WS_COMMIT) {
             Say "  Nouvelle version de WindowSmash ($($head.Substring(0,7)) -> $($WS_COMMIT.Substring(0,7))) : pour jouer en ligne, il faut la même que tes amis."
+            if (-not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) {   # (from kit 2.x's 13.0.4)
+                Say "  Elle demande la mise à jour $EXPECT_VERSION du jeu, dumpée de ta Switch à jour. Si tu ne l'as pas encore,"
+                Say '  réponds n : le jeu actuel reste jouable en attendant.'
+            }
             if (Ask-YesNo '  Je fais la mise à jour maintenant ? (recompilation : 20 min à 2 h selon la version et le PC)') { $Mode = 'install' }
         }
         if ($Mode -eq 'play') { Start-Game; exit 0 }
@@ -1204,10 +1250,16 @@ try {
     Show-Prereqs
     Ensure-Git
     $freeGB = Find-Repo $true
-    if ($freeGB -lt $NEED_GB -and -not (Test-Path -LiteralPath (Join-Path $Script:Repo "$TREE\build"))) {
+    if ($freeGB -lt $NEED_GB -and -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'dump\base\program_v0.nca'))) {
         Set-Step 'Disque' 'ÉCHEC' "$freeGB Go"; Fail 'E22' "$freeGB Go libres, il en faut environ $NEED_GB"
     }
     Stop-Test 'repo'
+    # Coming from kit 2.x's 13.0.4: the 13.0.5 update is asked and checked while WindowSmash is still at the version
+    # that plays 13.0.4, so that a player without it yet (no file chosen, a wrong one) keeps a game that starts.
+    $venv = Join-Path $Script:Repo '.venv\Scripts\python.exe'
+    $migrating = (Test-Path -LiteralPath (Join-Path $Script:Repo "$OLD_TREE\build\ssbu.exe")) -and
+                 -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe')) -and (Test-Path -LiteralPath $venv)
+    if ($migrating) { $Script:VenvPy = $venv; Ask-Inputs; Check-Inputs }
     Ensure-Revision
     Stop-Test 'revision'
     Ensure-Python
@@ -1215,13 +1267,13 @@ try {
     Ensure-LLVM
     Test-Toolchain
     Stop-Test 'tools'
-    Ask-Inputs
-    Check-Inputs
+    if (-not $migrating) { Ask-Inputs; Check-Inputs }
     Prepare-Base
     Prepare-Fonts
     Ensure-Opus
     Ensure-SDL3
     Build-Game
+    Remove-OldTree
     Set-Latency1
     if (Ask-YesNo '  Je précompile les shaders maintenant ? (recommandé : FPS stables dès le premier match ; 30 min à 2 h)') { Precompile-Shaders $false }
     else { Say '  Plus tard : relance WindowSmash Launcher et choisis 5).' }

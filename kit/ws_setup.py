@@ -11,29 +11,34 @@
                                             applies an update exactly over the original release stored so)
   fonts     SOURCE OUTDIR --keys DIR        the firmware's shared fonts (.bfttf): from an XCI's update partition or a
                                             folder of firmware NCAs (a dump, yuzu/suyu nand, Ryujinx bis)
-  install   --tree T --update NSP --keys DIR --jobs N [--dlc DIR] [--no-build]
-                                            tools/install_version.py install (out of memory, link and full disk
-                                            told apart in its output)
-  status    --tree T                        the version folder's state, for the report
-  unlock    --tree T [--dry-run]            every fighter unlocked in the save (tools/unlock_all.py, 13.0.4 added)
-  shaders   --tree T [--jobs N]             the game's shaders compiled ahead of time (tools/shader_aot.py)
+  install   --update NSP --keys DIR --jobs N [--dlc DIR] [--no-build]
+                                            the game built in the WindowSmash folder by its tools/build_game.py,
+                                            from the decrypted base (plain-nca) and the 13.0.5 update (below)
+  status                                    the game's state in the WindowSmash folder, for the report
+  unlock    [--dry-run]                     every fighter unlocked in the save (tools/unlock_all.py)
+  shaders   [--jobs N]                      the game's shaders compiled ahead of time (tools/shader_aot.py)
 
 Lines for ws_setup.ps1: "@@JSON {...}", "@@WARN <code> <text>", "@@ERROR <code> <text>" (then exit 2; exit 3 is
 "the compiler ran out of memory": the caller retries with fewer jobs). Key values are never printed.
 
-The 13.0.4 update reuses the original release's hashes for part of its hash table (IVFC level 5). WindowSmash's
-update.py up to commit adfb154 read that table from the patch alone and failed with "bytes at 0x20080 come from the
-original release"; kit 2.0 patched it here. Since commit c30efe3 update.py applies such an update as it is.
+Since commit ec8a8b5 WindowSmash plays game version 13.0.5 only, built in its own folder (dump/, build/, save/) by
+tools/build_game.py; kit 2.x built 13.0.4 in a version folder (v13.0.4/) with tools/install_version.py, which is gone.
+build_game.py reads the game from one folder: `install` gives it dump/game_files, holding the base decrypted by
+plain-nca (a hard link) and the update (a hard link, or a junction to its folder on another disk), so nothing big is
+copied and the base is not decrypted twice. A version folder's save and prepared shaders come over first, and before
+the build the build folders of the modules that are the same files in 13.0.5 (every one but main), so that a player
+coming from 13.0.4 recompiles main only.
 """
 import argparse
 import json
 import os
+import re
+import shutil
 import struct
 import subprocess
 import sys
 import time
 import traceback
-import types
 
 SSBU_BASE = 0x01006A800016E000
 SSBU_UPDATE = SSBU_BASE | 0x800
@@ -431,72 +436,195 @@ def cmd_fonts(a):
         raise Problem("E45", "polices manquantes: " + ", ".join(missing))
 
 
+STAGE = os.path.join("dump", "game_files")     # the game folder build_game.py is given (made by stage_game_files)
+PLAIN_BASE = os.path.join("dump", "base", "program_v0.nca")
+# build_game.py's steps ("[4/9] ..."), for the error a failure in each gets
+STEP_CODES = {1: "E35", 2: "E31", 3: "E53", 4: "E43", 5: "E45", 6: "E51", 7: "E53", 8: "E52", 9: "E60"}
+
+
+def migrate_version_folders(repo):
+    """Kit 2.x played from a version folder (v13.0.4\\): its save and prepared shaders come over to the WindowSmash
+    folder itself, where the game is built and played since 13.0.5 (the game upgrades an older save at its first
+    start). Nothing is done where the folder has its own already."""
+    trees = sorted(d for d in os.listdir(repo) if re.fullmatch(r"v\d+(\.\d+)*", d) and os.path.isdir(os.path.join(repo, d)))
+    for tree in trees:
+        save, root_save = os.path.join(repo, tree, "save"), os.path.join(repo, "save")
+        if os.path.isdir(save) and not os.path.exists(root_save):
+            shutil.copytree(save, root_save)
+            print(f"  {tree}\\save -> save (ta sauvegarde, reprise par la 13.0.5)", flush=True)
+        cache, root_cache = os.path.join(repo, tree, "dump", "shadercache"), os.path.join(repo, "dump", "shadercache")
+        if os.path.isdir(cache) and not os.path.exists(root_cache):
+            os.makedirs(os.path.dirname(root_cache), exist_ok=True)
+            shutil.move(cache, root_cache)
+            print(f"  {tree}\\dump\\shadercache -> dump\\shadercache (les shaders deja prepares)", flush=True)
+
+
+def drop_base_only_cfg(repo):
+    """Kit 2.x wrote dump\\modules\\romfs.cfg for the base game's data alone (1.0.0): build_game.py would take it as
+    its step 6 done. It goes; build_game.py writes the one with the update applied."""
+    cfg = os.path.join(repo, "dump", "modules", "romfs.cfg")
+    if not os.path.isfile(cfg):
+        return
+    with open(cfg, encoding="utf-8-sig") as f:
+        first = f.readline().strip()
+    if first != "layered" and os.path.normcase(os.path.abspath(first)) == os.path.normcase(os.path.join(repo, PLAIN_BASE)):
+        os.remove(cfg)
+        print("  dump\\modules\\romfs.cfg du jeu de base seul (kit 2.x) retire", flush=True)
+
+
+def is_junction(path):
+    return os.path.isjunction(path) if hasattr(os.path, "isjunction") else False
+
+
+def make_junction(link, target):
+    """A directory junction (no administrator rights needed, other disks allowed)."""
+    try:
+        import _winapi
+        _winapi.CreateJunction(os.path.abspath(target), os.path.abspath(link))
+    except (ImportError, AttributeError, OSError):
+        r = subprocess.run(["cmd", "/c", "mklink", "/J", os.path.abspath(link), os.path.abspath(target)],
+                           capture_output=True, text=True)
+        if r.returncode or not os.path.isdir(link):
+            raise Problem("E53", f"lien vers {target} impossible: {(r.stdout + r.stderr).strip()}")
+
+
+def clear_stage(stage):
+    """Empties the game folder of last time without ever going into what it points to: a hard link is a second name of
+    the player's file (the file stays), a junction a pointer to the player's folder (the folder stays)."""
+    if not os.path.isdir(stage):
+        return
+    for n in os.listdir(stage):
+        p = os.path.join(stage, n)
+        if is_junction(p) or (os.path.islink(p) and os.path.isdir(p)):
+            os.rmdir(p)   # (the junction itself: what it points to is not touched)
+        elif os.path.islink(p) or os.path.isfile(p):
+            os.remove(p)
+        else:
+            raise Problem("E53", f"{p}: dossier inattendu dans {stage} (rien n'a ete efface)")
+
+
+def stage_game_files(repo, update, dlc):
+    """dump\\game_files, the game folder build_game.py reads: the decrypted base and the update, by hard links (same
+    disk) or junctions to their folders (another disk), and the DLC folder as its dlc\\ (a junction)."""
+    stage = os.path.join(repo, STAGE)
+    clear_stage(stage)
+    os.makedirs(stage, exist_ok=True)
+    base = os.path.join(repo, PLAIN_BASE)
+    if not os.path.isfile(base):
+        raise Problem("E50", f"{base} manque: la copie dechiffree du jeu de base n'est pas faite")
+    for src, name, folder in ((base, "program_v0.nca", "base"), (os.path.abspath(update), os.path.basename(update), "update")):
+        try:
+            os.link(src, os.path.join(stage, name))
+        except OSError:   # (another disk, or one without hard links)
+            make_junction(os.path.join(stage, folder), os.path.dirname(src))
+    if dlc:
+        make_junction(os.path.join(stage, "dlc"), dlc)
+    return stage
+
+
+def same_content(a, b):
+    import filecmp
+    return os.path.isfile(a) and os.path.isfile(b) and filecmp.cmp(a, b, shallow=False)
+
+
+def seed_from_old_tree(repo):
+    """Kit 2.x's 13.0.4 build compiled every module, and the 98 fighter modules, sdk and subsdk0 are the very same
+    files in 13.0.5 (only main differs): their build folders (the generated C and its objects) move over to the new
+    build before it starts. recomp.py then writes the same C again, leaves those files as they are (same bytes) and
+    compiles what differs only: main, some minutes instead of hours. A module comes over only when its input is
+    byte-identical in both versions and the new build has no folder of its own for it yet; main never does."""
+    new_build = os.path.join(repo, "build")
+    for tree in sorted(d for d in os.listdir(repo) if re.fullmatch(r"v\d+(\.\d+)*", d)):
+        old_build = os.path.join(repo, tree, "build")
+        if not os.path.isdir(old_build):
+            continue
+        pairs = []
+        old_nro, new_nro = os.path.join(repo, tree, "dump", "nro"), os.path.join(repo, "dump", "nro")
+        if os.path.isdir(old_nro):
+            for n in sorted(os.listdir(old_nro)):
+                if n.endswith(".nro") and same_content(os.path.join(old_nro, n), os.path.join(new_nro, n)):
+                    pairs.append((os.path.join(old_build, "nro", n[:-4]), os.path.join(new_build, "nro", n[:-4])))
+        for name in ("sdk", "subsdk0"):
+            if same_content(os.path.join(repo, tree, "dump", "exefs", name), os.path.join(repo, "dump", "exefs", name)):
+                pairs.append((os.path.join(old_build, name), os.path.join(new_build, name)))
+        moved = 0
+        for src, dst in pairs:
+            if os.path.isdir(src) and not os.path.exists(dst):
+                try:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    os.replace(src, dst)   # (one disk: a rename)
+                    moved += 1
+                except OSError:            # (in use: that module is compiled again, that's all)
+                    pass
+        for n in os.listdir(old_build):    # the modules' images, named by build id: the same for the same module
+            if n.startswith("image-") and n.endswith(".img") and not os.path.exists(os.path.join(new_build, n)):
+                try:
+                    os.replace(os.path.join(old_build, n), os.path.join(new_build, n))
+                except OSError:
+                    pass
+        if moved:
+            print(f"  {moved} modules repris de {tree}\\build (identiques en 13.0.5 : pas recompiles)", flush=True)
+
+
 def cmd_install(a):
     tools(a.repo)
     os.chdir(a.repo)
-    os.environ["PYTHONUNBUFFERED"] = "1"
-    import install_version
+    migrate_version_folders(a.repo)
+    drop_base_only_cfg(a.repo)
+    stage = stage_game_files(a.repo, a.update, a.dlc)
+    cmd = [sys.executable, "-u", os.path.join("tools", "build_game.py"), "--game", stage, "--keys", a.keys,
+           "--jobs", str(a.jobs)]
+    # the game files first (steps 1 to 8), then the modules a 13.0.4 build already compiled, then the build
+    run_build_game(cmd + ["--prepare-only"])
+    if not a.no_build:
+        seed_from_old_tree(a.repo)
+        run_build_game(cmd)
 
-    seen = {"oom": False, "link": False, "disk": False}
 
-    def tee_run(cmd, **kw):
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                             errors="replace", bufsize=1)
-        for line in p.stdout:
-            sys.stdout.write(line)
-            low = line.lower()
-            if any(m in low for m in OOM_MARKS):
-                seen["oom"] = True
-            if any(m in low for m in DISK_MARKS):
-                seen["disk"] = True
-            if "link failed" in low or "could not link" in low or "lld-link: error" in low:
-                seen["link"] = True
-        p.wait()
-        return subprocess.CompletedProcess(cmd, p.returncode)
-
-    install_version.subprocess = types.SimpleNamespace(run=tee_run)
-    argv = ["install", "--tree", a.tree, "--update", a.update, "--keys", a.keys, "--jobs", str(a.jobs), "--force"]
-    if a.dlc:
-        argv += ["--dlc", a.dlc]
-    if a.no_build:
-        argv.append("--no-build")
-    sys.argv = [os.path.join(a.repo, "tools", "install_version.py")] + argv
-    step = lambda: getattr(sys.stdout, "last_step", None) or "?"  # noqa: E731
-    try:
-        install_version.main()
-    except SystemExit as e:
-        if e.code in (None, 0):
-            return
-        text = str(e.code)
-        if "build failed" in text:
-            if seen["disk"]:
-                raise Problem("E22", "disque plein pendant la compilation: libere de la place et relance")
-            if seen["oom"]:
-                raise Problem("E60", "le compilateur a manque de memoire", exit_code=3)
-            if seen["link"]:
-                raise Problem("E61", "l'edition de liens a echoue (voir le log)")
-            raise Problem("E60", "la compilation a echoue (voir le log)")
-        code = {"exefs": "E51", "romfs": "E51", "aoc": "E53", "nro": "E52", "extras": "E53", "version": "E53"}.get(step(), "E59")
-        raise Problem(code, f"etape [{step()}]: {text}")
-    except MemoryError:
-        raise Problem("E60", "Python a manque de memoire", exit_code=3)
+def run_build_game(cmd):
+    """tools/build_game.py, its output shown and kept, and its failure told as the kit's error code."""
+    seen = {"oom": False, "link": False, "disk": False, "step": 0, "error": []}
+    p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                         encoding="utf-8", errors="replace", bufsize=1,
+                         env=dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8"))   # (a path like "Bros.™")
+    for line in p.stdout:
+        sys.stdout.write(line)
+        low = line.lower()
+        m = re.match(r"\[(\d)/9\]", line.strip())
+        if m:
+            seen["step"] = int(m.group(1))
+        if any(k in low for k in OOM_MARKS):
+            seen["oom"] = True
+        if any(k in low for k in DISK_MARKS):
+            seen["disk"] = True
+        if "link failed" in low or "could not link" in low or "lld-link: error" in low:
+            seen["link"] = True
+        if line.startswith("ERROR: ") or seen["error"]:
+            seen["error"].append(line.rstrip())
+    p.wait()
+    if p.returncode == 0:
+        return
+    text = " ".join(seen["error"]).replace("ERROR: ", "", 1).strip() or f"build_game.py: code {p.returncode}"
+    step = seen["step"]
+    if seen["disk"]:
+        raise Problem("E22", "disque plein: libere de la place et relance")
+    if step == 9:
+        if seen["oom"]:
+            raise Problem("E60", "le compilateur a manque de memoire", exit_code=3)
+        if seen["link"]:
+            raise Problem("E61", "l'edition de liens a echoue (voir le log)")
+    raise Problem(STEP_CODES.get(step, "E59"), f"etape {step}/9: {text}")
 
 
 def cmd_unlock(a):
-    """tools/unlock_all.py on the version folder, with 13.0.4 added to the save layouts it knows.
-
-    unlock_all.py (commit 5682805) knows 11.0.0 and 13.0.5, which share one save layout, and refuses 13.0.4. A 13.0.4
-    save checked on 2026-10-18 has the same size (0x5B4AF8), the same save format (0x1b at offset 4; 0xd004 at offset
-    8, the version that wrote it), the eight starters exactly at the FLAGS offsets and valid milestones: the tool's own
-    checks pass, and they run here again on every save before anything is written."""
+    """tools/unlock_all.py on the WindowSmash folder's save (13.0.5's layout is the tool's own)."""
     tools(a.repo)
     os.chdir(a.repo)
     import unlock_all
-    unlock_all.LAYOUTS.setdefault("3EAE0063B12FD81E99FB5980BA56297049EA94F9", ("13.0.4", 0x5B4AF8, 0x53FF40, 0x54FEA8))
-    save = os.path.join(a.repo, a.tree, unlock_all.SAVE)
+    save = os.path.join(a.repo, unlock_all.SAVE)
     if not os.path.exists(save):
         raise Problem("E80", "pas encore de sauvegarde: lance le jeu une fois jusqu'au menu, ferme-le, puis recommence")
-    sys.argv = ["unlock_all.py", "--tree", os.path.join(a.repo, a.tree)] + (["--dry-run"] if a.dry_run else [])
+    sys.argv = ["unlock_all.py"] + (["--dry-run"] if a.dry_run else [])
     try:
         unlock_all.main()
     except SystemExit as e:
@@ -505,18 +633,11 @@ def cmd_unlock(a):
 
 
 def cmd_shaders(a):
-    """tools/shader_aot.py on the version folder: every shader of data.arc compiled ahead of time into its cache, so
-    that a first use loads it instead of compiling it during play (the FPS drops of a first match).
-
-    shader_aot.py up to commit d937050 builds its compiler tool as <port>/build/shaderaot.exe and runs the compiler with
-    that folder as working directory; with only a version folder built, <port>/build does not exist and it stops with
-    "NotADirectoryError [WinError 267]" (since 9c1b250 it makes the folder itself). The folder is made here first (it
-    is ignored by git, and holds no ssbu.exe, so the launchers do not list it as a version)."""
+    """tools/shader_aot.py on the WindowSmash folder: every shader of data.arc compiled ahead of time into its cache,
+    so that a first use loads it instead of compiling it during play (the FPS drops of a first match)."""
     tools(a.repo)
-    os.makedirs(os.path.join(a.repo, "build"), exist_ok=True)
-    cmd = [sys.executable, "-u", os.path.join(a.repo, "tools", "shader_aot.py"), "--tree", os.path.join(a.repo, a.tree),
-           "--jobs", str(a.jobs)]
-    env = dict(os.environ, PYTHONUNBUFFERED="1")
+    cmd = [sys.executable, "-u", os.path.join(a.repo, "tools", "shader_aot.py"), "--jobs", str(a.jobs)]
+    env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
     p = subprocess.Popen(cmd, cwd=a.repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                          encoding="utf-8", errors="replace", bufsize=1)
     for line in p.stdout:
@@ -527,15 +648,13 @@ def cmd_shaders(a):
 
 
 def cmd_status(a):
-    tree = os.path.join(a.repo, a.tree)
-    st = {"tree": tree, "exists": os.path.isdir(tree)}
-    p = os.path.join(tree, "install.json")
+    tree = a.repo
+    st = {"folder": tree, "old_version_folders": [d for d in os.listdir(tree) if re.fullmatch(r"v\d+(\.\d+)*", d)]}
+    p = os.path.join(tree, "dump", "game_source.txt")
     if os.path.exists(p):
-        try:
-            st["install_steps"] = sorted(json.load(open(p)).keys())
-        except ValueError:
-            st["install_steps"] = "illisible"
-    for rel in ("dump/exefs/main", "dump/modules/romfs.cfg", "dump/modules/romfs_patch.bin", "build/ssbu.exe", "version.txt"):
+        st["game_source"] = open(p, encoding="utf-8", errors="replace").readline().strip()
+    for rel in ("dump/exefs/main", "dump/modules/romfs.cfg", "dump/modules/romfs_patch.bin", "build/ssbu.exe", "version.txt",
+                PLAIN_BASE.replace(os.sep, "/")):
         f = os.path.join(tree, rel)
         st[rel] = os.path.getsize(f) if os.path.exists(f) else None
     nro = os.path.join(tree, "dump", "nro")
@@ -571,19 +690,15 @@ def main():
     p.add_argument("outdir")
     p.add_argument("--keys", required=True)
     p = sub.add_parser("install")
-    p.add_argument("--tree", required=True)
     p.add_argument("--update", required=True)
     p.add_argument("--keys", required=True)
     p.add_argument("--jobs", type=int, required=True)
     p.add_argument("--dlc")
     p.add_argument("--no-build", action="store_true")
-    p = sub.add_parser("status")
-    p.add_argument("--tree", required=True)
+    sub.add_parser("status")
     p = sub.add_parser("unlock")
-    p.add_argument("--tree", required=True)
     p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("shaders")
-    p.add_argument("--tree", required=True)
     p.add_argument("--jobs", type=int, default=6)
     a = ap.parse_args()
     a.repo = os.path.abspath(a.repo)
