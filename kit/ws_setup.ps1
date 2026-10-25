@@ -10,7 +10,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '3.0 (2026-10-25)'
+$KitVersion = '3.1 (2026-10-25)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
 # (the project moved from github.com/SNO2207 to github.com/OpenSmash-Ultimate on 2026-10-21; the old address forwards)
@@ -978,8 +978,8 @@ function Ensure-SDL3 {
 }
 
 # ---- the build ----------------------------------------------------------------------------------
-function Build-Game {
-    Title "Mise à jour $EXPECT_VERSION et compilation du jeu (1 à 3 heures selon le PC)"
+function Build-Game([string]$Label = "Mise à jour $EXPECT_VERSION et compilation du jeu (1 à 3 heures selon le PC)") {
+    Title $Label
     $os = Get-CimInstance Win32_OperatingSystem
     $ram = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB
     $cpu = (Get-CimInstance Win32_Processor | Measure-Object NumberOfLogicalProcessors -Sum).Sum
@@ -1150,6 +1150,40 @@ function Unlock-Fighters {
     Set-Step 'Déblocage' 'OK'
 }
 
+# The DLC a player bought, dumped from their own Switch (nxdumptool: .nsp files): their folder goes to the build as the
+# game folder's dlc\, and build_game.py's step 7 lists them in dump\modules\aoc.cfg, which the game reads. The fighters'
+# code is in every 13.0.5 build already (data.arc holds it), so nothing is compiled again. Only the DLC in the folder
+# count: nothing here unlocks one that isn't there.
+function Add-DLC {
+    Title 'Ajouter tes DLC (dumpés de ta Switch)'
+    $null = Find-Repo $false
+    if (-not $Script:Repo -or -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) { Say "  Le jeu n'est pas encore installé en $EXPECT_VERSION : choisis 1) Installer."; return }
+    if (Get-Process ssbu -ErrorAction SilentlyContinue) { Fail 'E53' 'le jeu tourne : ferme-le d''abord' }
+    $prev = Load-Inputs
+    if (-not ($prev -and $prev.update -and (Test-Path -LiteralPath $prev.update) -and $prev.update_version -eq $EXPECT_VERSION)) {
+        Fail 'E40' "la mise à jour $EXPECT_VERSION choisie à l'installation est introuvable : choisis 1) Installer"
+    }
+    $Script:Keys = Join-Path $Script:Repo 'keys'
+    $Script:VenvPy = Join-Path $Script:Repo '.venv\Scripts\python.exe'
+    if (-not (Test-Path -LiteralPath (Join-Path $Script:Keys 'prod.keys')) -or -not (Test-Path -LiteralPath $Script:VenvPy)) { Fail 'E40' 'installation incomplète : choisis 1) Installer' }
+    Say '  Les DLC (combattants, costumes, esprits) sont ceux que tu as achetés, dumpés de ta Switch avec nxdumptool'
+    Say '  (fichiers .nsp). Pour jouer en ligne ensemble, ayez les mêmes DLC.'
+    $d = Pick-Folder 'Choisis le dossier qui contient tes DLC (.nsp dumpés de ta Switch)'
+    if (-not $d) { Fail 'E40' 'dossier des DLC non choisi' }
+    # (-Include does nothing with -LiteralPath in PowerShell 5.1: the extension is tested instead)
+    if (-not (Get-ChildItem -LiteralPath $d -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.nsp', '.nca' } | Select-Object -First 1)) { Fail 'E40' "pas de fichier .nsp dans $d" }
+    $Script:Inputs = @{ base = $prev.base; update = $prev.update; prodkeys = $prev.prodkeys; titlekeys = $prev.titlekeys; dlc = $d; firmware = $prev.firmware; update_version = $prev.update_version }
+    Save-Inputs
+    Ensure-LLVM; Ensure-Opus; Ensure-SDL3      # (the build's environment as at the install: the game stays as it is)
+    Build-Game 'Les DLC dans le jeu (quelques minutes)'
+    $cfg = Join-Path $Script:Repo 'dump\modules\aoc.cfg'
+    $n = if (Test-Path -LiteralPath $cfg) { @(Get-Content -LiteralPath $cfg | Where-Object { $_ -and -not $_.StartsWith('#') }).Count } else { 0 }
+    $Script:Info['DLC'] = "$n dans $d"
+    if (-not $n) { Set-Step 'DLC' 'ÉCHEC' 'aucun'; Fail 'E53' "aucun DLC de Smash Ultimate reconnu dans $d (des .nsp de DLC dumpés de ta Switch ?)" }
+    Ok "$n DLC ajoutés : ils apparaissent au prochain lancement du jeu"
+    Set-Step 'DLC' 'OK' "$n"
+}
+
 function Ensure-OnlineName {
     $f = Join-Path $Script:Repo 'online_name.txt'
     if (Test-Path -LiteralPath $f) { return }
@@ -1207,8 +1241,9 @@ try {
         Write-Host '  3) Diagnostic seulement (crée le rapport sans rien installer)'
         Write-Host '  4) Débloquer tous les personnages (après avoir lancé le jeu une fois)'
         Write-Host '  5) Optimiser : précompiler les shaders et latence 1 (FPS stables)'
+        Write-Host '  6) Ajouter mes DLC (dumpés de ma Switch, fichiers .nsp)'
         $m = Read-Host '  Ton choix [1]'
-        $Mode = @{ '2' = 'play'; '3' = 'diag'; '4' = 'unlock'; '5' = 'optimize' }[$m]
+        $Mode = @{ '2' = 'play'; '3' = 'diag'; '4' = 'unlock'; '5' = 'optimize'; '6' = 'dlc' }[$m]
         if (-not $Mode) { $Mode = 'install' }
     }
     Probe-System
@@ -1230,6 +1265,7 @@ try {
     }
     if ($Mode -eq 'unlock') { Unlock-Fighters; Read-Host 'Entrée pour fermer'; exit 0 }
     if ($Mode -eq 'optimize') { Optimize-Only; Write-Report 'OK (optimisation)'; Read-Host 'Entrée pour fermer'; exit 0 }
+    if ($Mode -eq 'dlc') { Add-DLC; Write-Report 'OK (DLC)'; Read-Host 'Entrée pour fermer'; exit 0 }
     if ($Mode -eq 'diag') {
         $null = Find-Repo $false
         $Script:SysPy = Find-Python

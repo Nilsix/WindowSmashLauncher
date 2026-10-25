@@ -571,6 +571,10 @@ def cmd_install(a):
     os.chdir(a.repo)
     migrate_version_folders(a.repo)
     drop_base_only_cfg(a.repo)
+    if a.dlc:   # (a DLC folder given now: build_game.py's step 7 reads it again, whatever it found before)
+        for n in ("aoc.cfg", "aoc.none"):
+            if os.path.exists(os.path.join(a.repo, "dump", "modules", n)):
+                os.remove(os.path.join(a.repo, "dump", "modules", n))
     stage = stage_game_files(a.repo, a.update, a.dlc)
     cmd = [sys.executable, "-u", os.path.join("tools", "build_game.py"), "--game", stage, "--keys", a.keys,
            "--jobs", str(a.jobs)]

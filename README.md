@@ -57,6 +57,7 @@ Depuis octobre 2026, WindowSmash ne marche qu'avec la mise à jour **13.0.5** du
 | 3) Diagnostic | Crée un rapport sans rien installer. |
 | 4) Débloquer tous les personnages | Après avoir lancé le jeu une fois puis l'avoir fermé. |
 | 5) Optimiser | Précompile les shaders (FPS stables) et met la latence d'affichage à 1. |
+| 6) Ajouter mes DLC | Ajoute au jeu les DLC que tu as achetés, dumpés de ta Switch (dossier de fichiers `.nsp`). En ligne, ayez les mêmes DLC. |
 
 ## Jouer en ligne
 
