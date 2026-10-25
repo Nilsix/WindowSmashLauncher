@@ -10,7 +10,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '3.1 (2026-10-25)'
+$KitVersion = '3.2 (2026-10-25)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
 # (the project moved from github.com/SNO2207 to github.com/OpenSmash-Ultimate on 2026-10-21; the old address forwards)
@@ -419,6 +419,38 @@ function Find-Git {
     return $null
 }
 
+# Git refuses a repository it cannot prove the user owns ("detected dubious ownership"): one on a drive whose file
+# system records no owner (exFAT or FAT32, as big external disks often are) or one made by another account. The kit's
+# own WindowSmash folder is declared safe for the git commands the kit starts (and their children) through
+# GIT_CONFIG_*: command-scope configuration, where safe.directory counts, so the player's git settings stay as they are.
+function Set-GitSafeRepo {
+    if (-not $Script:Repo) { return }
+    $dir = $Script:Repo -replace '\\', '/'
+    $n = if ($env:GIT_CONFIG_COUNT -match '^\d+$') { [int]$env:GIT_CONFIG_COUNT } else { 0 }
+    for ($i = 0; $i -lt $n; $i++) {
+        if ([Environment]::GetEnvironmentVariable("GIT_CONFIG_KEY_$i") -eq 'safe.directory' -and
+            [Environment]::GetEnvironmentVariable("GIT_CONFIG_VALUE_$i") -eq $dir) { return }
+    }
+    [Environment]::SetEnvironmentVariable("GIT_CONFIG_KEY_$n", 'safe.directory')
+    [Environment]::SetEnvironmentVariable("GIT_CONFIG_VALUE_$n", $dir)
+    $env:GIT_CONFIG_COUNT = "$($n + 1)"
+}
+
+# git's own reason for a failure, from its captured output: its last "fatal:" or "error:" line, else its last line.
+function Get-GitError($lines) {
+    $l = @($lines | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    $why = @($l | Where-Object { $_ -match '^(fatal|error):' }) | Select-Object -Last 1
+    if (-not $why) { $why = $l | Select-Object -Last 1 }
+    foreach ($x in $l) { Log "GIT $x" }
+    return "$why"
+}
+
+# The decrypted base game: in dump\game_files since kit 3.2 (where the game reads it), in dump\base before.
+function Test-PlainBase {
+    return (Test-Path -LiteralPath (Join-Path $Script:Repo 'dump\game_files\program_v0.nca')) -or
+           (Test-Path -LiteralPath (Join-Path $Script:Repo 'dump\base\program_v0.nca'))
+}
+
 function Ensure-Git {
     Title 'Git'
     $Script:Git = Find-Git
@@ -557,6 +589,7 @@ function Find-Repo([bool]$allowClone) {
     $drive = (Get-Item -LiteralPath $Script:Repo).PSDrive
     $freeGB = [math]::Round($drive.Free / 1GB, 1)
     $Script:Info['Disque libre'] = "$freeGB Go sur $($drive.Name):"
+    Set-GitSafeRepo
     Set-Step 'Dossier' 'OK' $Script:Repo
     return $freeGB
 }
@@ -598,20 +631,23 @@ function Ensure-Revision {
     Title 'Version de WindowSmash'
     if (-not $Script:Git) { $Script:Git = Find-Git }
     if ($Script:Git -and (Test-Path -LiteralPath (Join-Path $Script:Repo '.git'))) {
-        $head = (Run-Native { & $Script:Git -C $Script:Repo rev-parse HEAD }) | Select-Object -First 1
+        Set-GitSafeRepo
+        $out = @(Run-Native { & $Script:Git -C $Script:Repo rev-parse HEAD 2>&1 })
+        if ($LASTEXITCODE) { Set-Step 'Version' 'ÉCHEC' 'git'; Fail 'E11' "git ne peut pas lire le dossier WindowSmash : $(Get-GitError $out)" }
+        $head = "$($out | Select-Object -First 1)".Trim()
         $Script:Info['WindowSmash (git)'] = "$head"
         if ($head -eq $WS_COMMIT) { Ok "déjà à la bonne version ($($WS_COMMIT.Substring(0,7)))"; Set-Step 'Version' 'OK' 'git'; return }
         $dirty = @(Run-Native { & $Script:Git -C $Script:Repo status --porcelain --untracked-files=no }) | Where-Object { $_ -notmatch 'online_server\.txt$' }
         if ($dirty) { Set-Step 'Version' 'ÉCHEC' 'fichiers modifiés'; Fail 'E11' "des fichiers du dossier ont été modifiés (git status) : $(($dirty | Select-Object -First 5) -join ', ')" }
         Say "  Passage à la version $($WS_COMMIT.Substring(0,7)) (branche $WS_BRANCH)..."
-        Run-Native { & $Script:Git -C $Script:Repo fetch origin $WS_BRANCH }
-        if ($LASTEXITCODE) { Set-Step 'Version' 'ÉCHEC' 'git fetch'; Fail 'E11' 'git fetch a échoué (internet ?)' }
+        $out = @(Run-Native { & $Script:Git -C $Script:Repo fetch origin $WS_BRANCH 2>&1 })
+        if ($LASTEXITCODE) { Set-Step 'Version' 'ÉCHEC' 'git fetch'; Fail 'E11' "git fetch a échoué : $(Get-GitError $out)" }
         $mine = Save-OnlineServer
         Run-Native { & $Script:Git -C $Script:Repo checkout -- online_server.txt }   # (an edit there would block the checkout)
-        Run-Native { & $Script:Git -C $Script:Repo -c advice.detachedHead=false checkout --detach $WS_COMMIT }
+        $out = @(Run-Native { & $Script:Git -C $Script:Repo -c advice.detachedHead=false checkout --detach $WS_COMMIT 2>&1 })
         $rc = $LASTEXITCODE
         Restore-OnlineServer $mine
-        if ($rc) { Set-Step 'Version' 'ÉCHEC' 'git checkout'; Fail 'E11' "git checkout $WS_COMMIT a échoué" }
+        if ($rc) { Set-Step 'Version' 'ÉCHEC' 'git checkout'; Fail 'E11' "git checkout $WS_COMMIT a échoué : $(Get-GitError $out)" }
         $Script:Info['WindowSmash (git)'] = "$WS_COMMIT (était $head)"
         Ok 'version mise à jour'; Set-Step 'Version' 'OK' 'git checkout'; return
     }
@@ -874,7 +910,7 @@ function Check-Inputs {
     $Script:Inputs.update_version = $u.Json.display; Save-Inputs
     # space: the decrypted base (unless it is there already), the update's data (~4 GB), the build (~10 GB)
     $free = (Get-Item -LiteralPath $Script:Repo).PSDrive.Free
-    $need = 16GB + $(if (Test-Path -LiteralPath (Join-Path $Script:Repo 'dump\base\program_v0.nca')) { 0 } else { [int64]$b.Json.program_size })
+    $need = 16GB + $(if (Test-PlainBase) { 0 } else { [int64]$b.Json.program_size })
     if ($free -lt $need -and -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) {
         $hint = if (Test-Path -LiteralPath (Join-Path $Script:Repo $OLD_TREE)) { " (l'ancien dossier $OLD_TREE peut être supprimé : copie d'abord son dossier save)" } else { '' }
         Set-Step 'Fichiers' 'ÉCHEC' 'disque'; Fail 'E22' ("il faut {0:N0} Go libres, il y en a {1:N0}{2}" -f ($need / 1GB), ($free / 1GB), $hint)
@@ -884,7 +920,9 @@ function Check-Inputs {
 
 function Prepare-Base {
     Title 'Copie déchiffrée du jeu de base (environ 15 Go, 5 à 15 minutes)'
+    # (where the game reads it: dump\game_files, also on a disk without hard links; kit 3.0/3.1's dump\base copy is kept)
     $out = Join-Path $Script:Repo 'dump\base\program_v0.nca'
+    if (-not (Test-Path -LiteralPath $out)) { $out = Join-Path $Script:Repo 'dump\game_files\program_v0.nca' }
     Helper-OrFail @('plain-nca', $Script:Inputs.base, $out, '--keys', $Script:Keys) 'E50' -Live -name 'plain-nca' | Out-Null
     Ok 'jeu de base prêt (WindowSmash le lit sur place : pas de seconde copie)'
     Set-Step 'Jeu de base' 'OK'
@@ -1286,7 +1324,7 @@ try {
     Show-Prereqs
     Ensure-Git
     $freeGB = Find-Repo $true
-    if ($freeGB -lt $NEED_GB -and -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'dump\base\program_v0.nca'))) {
+    if ($freeGB -lt $NEED_GB -and -not (Test-PlainBase)) {
         Set-Step 'Disque' 'ÉCHEC' "$freeGB Go"; Fail 'E22' "$freeGB Go libres, il en faut environ $NEED_GB"
     }
     Stop-Test 'repo'

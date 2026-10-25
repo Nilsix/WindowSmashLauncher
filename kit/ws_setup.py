@@ -437,7 +437,9 @@ def cmd_fonts(a):
 
 
 STAGE = os.path.join("dump", "game_files")     # the game folder build_game.py is given (made by stage_game_files)
-PLAIN_BASE = os.path.join("dump", "base", "program_v0.nca")
+STAGE_BASE = os.path.join(STAGE, "program_v0.nca")   # the decrypted base as the game reads it (its romfs cfg names it)
+PLAIN_BASE = os.path.join("dump", "base", "program_v0.nca")   # where kit 3.0/3.1 decrypted it
+COPIES = "kit_copies.txt"   # in STAGE: the names the kit copied there, on a disk without links (only those it deletes)
 # build_game.py's steps ("[4/9] ..."), for the error a failure in each gets
 STEP_CODES = {1: "E35", 2: "E31", 3: "E53", 4: "E43", 5: "E45", 6: "E51", 7: "E53", 8: "E52", 9: "E60"}
 
@@ -477,7 +479,7 @@ def is_junction(path):
 
 
 def make_junction(link, target):
-    """A directory junction (no administrator rights needed, other disks allowed)."""
+    """A directory junction (no administrator rights needed, other disks allowed; not on exFAT or FAT32)."""
     try:
         import _winapi
         _winapi.CreateJunction(os.path.abspath(target), os.path.abspath(link))
@@ -488,37 +490,137 @@ def make_junction(link, target):
             raise Problem("E53", f"lien vers {target} impossible: {(r.stdout + r.stderr).strip()}")
 
 
-def clear_stage(stage):
-    """Empties the game folder of last time without ever going into what it points to: a hard link is a second name of
-    the player's file (the file stays), a junction a pointer to the player's folder (the folder stays)."""
-    if not os.path.isdir(stage):
-        return
-    for n in os.listdir(stage):
-        p = os.path.join(stage, n)
-        if is_junction(p) or (os.path.islink(p) and os.path.isdir(p)):
-            os.rmdir(p)   # (the junction itself: what it points to is not touched)
-        elif os.path.islink(p) or os.path.isfile(p):
+def read_copies(stage):
+    try:
+        with open(os.path.join(stage, COPIES), encoding="utf-8") as f:
+            return {line.strip() for line in f if line.strip()}
+    except OSError:
+        return set()
+
+
+def write_copies(stage, copies):
+    path = os.path.join(stage, COPIES)
+    if copies:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.writelines(n + "\n" for n in sorted(copies))
+    elif os.path.exists(path):
+        os.remove(path)
+
+
+def remove_entry(stage, name, copies):
+    """One entry of the game folder, never going into what it points to: a junction (only the link goes), a second
+    name of a file (a hard link: the file stays under its other name), or what the kit copied there itself. Anything
+    else is left alone and stops the run: it could be the only copy of something."""
+    p = os.path.join(stage, name)
+    if is_junction(p) or (os.path.islink(p) and os.path.isdir(p)):
+        os.rmdir(p)
+    elif os.path.islink(p):
+        os.remove(p)
+    elif name in copies:
+        if os.path.isdir(p):
+            shutil.rmtree(p)
+        elif os.path.exists(p):
             os.remove(p)
-        else:
-            raise Problem("E53", f"{p}: dossier inattendu dans {stage} (rien n'a ete efface)")
+        copies.discard(name)
+    elif os.path.isfile(p) and os.stat(p).st_nlink > 1:
+        os.remove(p)
+    else:
+        raise Problem("E53", f"{p}: inattendu dans {os.path.dirname(p)} (rien n'a ete efface)")
+
+
+def same_stamp(a, b):
+    sa, sb = os.stat(a), os.stat(b)
+    return sa.st_size == sb.st_size and abs(sa.st_mtime - sb.st_mtime) < 2.5   # (FAT keeps times to 2 s)
+
+
+def stage_base(repo, stage):
+    """The decrypted base in the game folder, where the game reads it: there already (kit 3.2 decrypts it there), or
+    kit 3.0/3.1's dump/base copy given a second name there (a hard link), or moved there on a disk without hard links
+    (exFAT: the same disk, so the move is a rename)."""
+    dst, old = os.path.join(repo, STAGE_BASE), os.path.join(repo, PLAIN_BASE)
+    if os.path.isfile(dst):
+        return
+    if not os.path.isfile(old):
+        raise Problem("E50", f"{dst} manque: la copie dechiffree du jeu de base n'est pas faite")
+    try:
+        os.link(old, dst)
+    except OSError:
+        os.replace(old, dst)
+        print("  jeu de base dechiffre deplace dans dump\\game_files (ce disque ne fait pas de liens)", flush=True)
+
+
+def place_file(src, stage, folder, copies):
+    """A file (the update) into the game folder; the entry name it got. A hard link (same disk); else a junction named
+    `folder` to its folder (another disk); else, on a disk without either (exFAT), a copy, kept from one run to the
+    next while it is the same file."""
+    name = os.path.basename(src)
+    dst = os.path.join(stage, name)
+    if os.path.lexists(dst):
+        if os.path.isfile(dst) and (os.path.samefile(src, dst) or (name in copies and same_stamp(src, dst))):
+            return name
+        remove_entry(stage, name, copies)
+    try:
+        os.link(src, dst)
+        return name
+    except OSError:
+        pass
+    j = os.path.join(stage, folder)
+    if os.path.lexists(j):
+        remove_entry(stage, folder, copies)
+    try:
+        make_junction(j, os.path.dirname(src))
+        return folder
+    except Problem:
+        pass
+    print(f"  copie de {name} dans dump\\game_files ({os.path.getsize(src) / 2**30:.1f} Go: ce disque ne fait pas de "
+          "liens)", flush=True)
+    copies.add(name)
+    shutil.copy2(src, dst + ".part")
+    os.replace(dst + ".part", dst)
+    return name
+
+
+def place_dir(src, stage, name, copies):
+    """A folder (the DLC) into the game folder as `name`: a junction; else, on a disk without junctions, a copy of its
+    .nsp and .nca files (DLC packages are small)."""
+    dst = os.path.join(stage, name)
+    if os.path.lexists(dst):
+        remove_entry(stage, name, copies)
+    try:
+        make_junction(dst, src)
+        return name
+    except Problem:
+        pass
+    copies.add(name)
+    os.makedirs(dst)
+    n = 0
+    for dp, _dirs, files in os.walk(src):
+        for f in files:
+            if f.lower().endswith((".nsp", ".nca")):
+                shutil.copy2(os.path.join(dp, f), os.path.join(dst, f))
+                n += 1
+    print(f"  {n} fichiers de DLC copies dans dump\\game_files\\{name} (ce disque ne fait pas de liens)", flush=True)
+    return name
 
 
 def stage_game_files(repo, update, dlc):
-    """dump\\game_files, the game folder build_game.py reads: the decrypted base and the update, by hard links (same
-    disk) or junctions to their folders (another disk), and the DLC folder as its dlc\\ (a junction)."""
+    """dump\\game_files, the game folder build_game.py reads: the decrypted base (which lives there, or a hard link to
+    kit 3.0/3.1's copy), the update and the DLC folder (see place_file, place_dir). What last time left and this time
+    does not use goes, never going into what a link points to (remove_entry)."""
     stage = os.path.join(repo, STAGE)
-    clear_stage(stage)
     os.makedirs(stage, exist_ok=True)
-    base = os.path.join(repo, PLAIN_BASE)
-    if not os.path.isfile(base):
-        raise Problem("E50", f"{base} manque: la copie dechiffree du jeu de base n'est pas faite")
-    for src, name, folder in ((base, "program_v0.nca", "base"), (os.path.abspath(update), os.path.basename(update), "update")):
-        try:
-            os.link(src, os.path.join(stage, name))
-        except OSError:   # (another disk, or one without hard links)
-            make_junction(os.path.join(stage, folder), os.path.dirname(src))
-    if dlc:
-        make_junction(os.path.join(stage, "dlc"), dlc)
+    copies = read_copies(stage)
+    stage_base(repo, stage)
+    keep = {"program_v0.nca", COPIES}
+    try:
+        keep.add(place_file(os.path.abspath(update), stage, "update", copies))
+        if dlc:
+            keep.add(place_dir(os.path.abspath(dlc), stage, "dlc", copies))
+        for n in os.listdir(stage):
+            if n not in keep:
+                remove_entry(stage, n, copies)
+    finally:
+        write_copies(stage, copies)
     return stage
 
 
@@ -658,7 +760,7 @@ def cmd_status(a):
     if os.path.exists(p):
         st["game_source"] = open(p, encoding="utf-8", errors="replace").readline().strip()
     for rel in ("dump/exefs/main", "dump/modules/romfs.cfg", "dump/modules/romfs_patch.bin", "build/ssbu.exe", "version.txt",
-                PLAIN_BASE.replace(os.sep, "/")):
+                STAGE_BASE.replace(os.sep, "/"), PLAIN_BASE.replace(os.sep, "/")):
         f = os.path.join(tree, rel)
         st[rel] = os.path.getsize(f) if os.path.exists(f) else None
     nro = os.path.join(tree, "dump", "nro")
