@@ -110,7 +110,8 @@ OpenSmash a son propre lobby : les joueurs WindowSmash et OpenSmash ne se voient
 | 3) Diagnostic | Crée `OpenSmash-setup-report.txt` sur le Bureau sans rien installer. |
 | 4) Ajouter mes DLC | Les DLC que tu as achetés, dumpés de ta Switch (dossier de fichiers `.nsp`, noms d'origine) : même dossier que l'option 6 du launcher WindowSmash. Pas de recompilation. En ligne, ayez les mêmes DLC. |
 | 5) Débloquer tous les personnages | Les 74 personnages de base dans ta sauvegarde (les DLC restent au jeu). Après un premier lancement du jeu, jeu fermé ; une copie de la sauvegarde d'avant est gardée dans `build\save_backups`. |
-| 6) Français / English | Même réglage de langue que le launcher WindowSmash. |
+| 6) Mode PC peu puissant | On / off : résolution interne réduite de moitié et shaders chargés au fil des chargements (moins de mémoire), pour une carte graphique faible ou intégrée. |
+| 7) Français / English | Même réglage de langue que le launcher WindowSmash. |
 
 N'utilise pas `Install SSBU.bat` ni les raccourcis « SSBU native » d'OpenSmash : ils le mettraient à jour au-delà de
 la version du groupe. Il faut une carte graphique avec un pilote **Vulkan 1.3**.

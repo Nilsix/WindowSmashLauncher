@@ -18,16 +18,16 @@
 # After a version change the build repeats from the step OpenSmash's own self-update would repeat (scripts\update.py's
 # rebuild_advice on the changed files, passed with install.py's --reexec), counted from the oldest version not built yet
 # (opensmash-rebuild.txt), so an update stopped half way is finished at the next start.
-# Messages: English, or French when chosen (menu 6, kept in %LOCALAPPDATA%\WindowSmash-setup\lang.txt, the same file as
+# Messages: English, or French when chosen (menu 7, kept in %LOCALAPPDATA%\WindowSmash-setup\lang.txt, the same file as
 # the WindowSmash kit's): every message is written as L 'English' 'French'. The report and the log stay in English.
-# Modes (-Mode, the launcher's argument): install, play, diag, dlc (menu 4: add my DLC), unlock (menu 5: all fighters);
+# Modes (-Mode, the launcher's argument): install, play, diag, dlc (menu 4: add my DLC), unlock (menu 5: all fighters), lowspec (menu 6);
 # none: the menu.
 # Test-only environment: WS_STOP_AFTER=repo|revision|python|prepare, WS_NO_NOTEPAD, WS_REPORT_DIR, WS_INPUTS_JSON
 # (another inputs.json).
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.1 (2026-10-26)'
+$KitVersion = '1.2 (2026-10-26)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -679,6 +679,41 @@ function Set-Rollback([bool]$on) {
     } catch { Warn (L "W72 rollback setting not written ($($_.Exception.Message))" "W72 réglage du rollback non écrit ($($_.Exception.Message))"); return $false }
 }
 
+# key = value in the build's config\graphics.ini, written like Set-Rollback (the game's gfx_ini_set rule). -> $true
+function Set-IniKey([string]$key, [string]$v) {
+    $ini = Join-Path (Get-BuildDir) 'config\graphics.ini'
+    try {
+        New-Item -ItemType Directory -Force (Split-Path $ini -Parent) | Out-Null
+        $text = if (Test-Path -LiteralPath $ini) { [IO.File]::ReadAllText($ini) } else { '' }
+        $done = $false
+        $out = foreach ($ln in [regex]::Split($text, '(?<=\n)')) {
+            if (-not $done -and $ln -match ('^[ \t]*' + [regex]::Escape($key) + '[ \t]*=')) { $done = $true; "$key = $v`r`n" } else { $ln }
+        }
+        $t = -join $out
+        if (-not $done) { if ($t -and -not $t.EndsWith("`n")) { $t += "`r`n" }; $t += "$key = $v`r`n" }
+        [IO.File]::WriteAllText($ini, $t, (New-Object Text.UTF8Encoding $false))
+        Log "$key = $v in $ini"
+        return $true
+    } catch { Warn (L "W72 $key not written ($($_.Exception.Message))" "W72 $key non écrit ($($_.Exception.Message))"); return $false }
+}
+
+# Menu 6: low spec mode, for a weak or integrated GPU / little memory, switched on or off. On: OpenSmash's own "low"
+# profile (internal resolution 0.5, the game's texture filtering, vsync by the clock) and the shaders of a fighter or
+# stage loaded at its loading screen instead of all at the start (less memory). Off: every key as written, resolution 1.0,
+# all shaders at the start.
+function Set-LowSpec {
+    Title (L 'Low spec mode' 'Mode PC peu puissant')
+    if (-not (Find-Repo $false)) { Fail 'E80' (L 'OpenSmash is not installed yet: choose 1) Install first' 'OpenSmash n''est pas encore installé : choisis d''abord 1) Installer') }
+    $ini = Join-Path (Get-BuildDir) 'config\graphics.ini'
+    $on = (Test-Path -LiteralPath $ini) -and ((Get-Content -LiteralPath $ini) -match '^[ \t]*profile[ \t]*=[ \t]*low')
+    Say (L "  Low spec mode is now $(if ($on) { 'ON' } else { 'OFF' })." "  Le mode PC peu puissant est actuellement $(if ($on) { 'ON' } else { 'OFF' }).")
+    if (-not (Ask-YesNo (L "  Switch it $(if ($on) { 'OFF' } else { 'ON' })?" "  Je le passe en $(if ($on) { 'OFF' } else { 'ON' }) ?"))) { return }
+    if ($on) { $ok = (Set-IniKey 'profile' 'custom') -and (Set-IniKey 'resolution_scale' '1.0') -and (Set-IniKey 'shader_load' 'start') }
+    else { $ok = (Set-IniKey 'profile' 'low') -and (Set-IniKey 'shader_load' 'loading') }
+    if ($ok) { Ok (L "low spec mode $(if ($on) { 'OFF' } else { 'ON' }) (from the next start of the game)" "mode PC peu puissant $(if ($on) { 'OFF' } else { 'ON' }) (au prochain lancement du jeu)") }
+    Set-Step 'Low spec' 'OK' "$(if ($on) { 'off' } else { 'on' })"
+}
+
 # Play SSBU.bat (scripts\run.py --play), rollback on. The game must still run 15 s after it appeared (the WindowSmash
 # kit's check); a failure's report holds the end of the newest build\logs\game_*.log (run.py's game log).
 function Start-Game {
@@ -718,10 +753,11 @@ try {
         Write-Host (L '  3) Diagnosis only (makes the report, installs nothing)' '  3) Diagnostic seulement (crée le rapport sans rien installer)')
         Write-Host (L '  4) Add my DLC (bought, dumped from your Switch)' '  4) Ajouter mes DLC (achetés, dumpés de ta Switch)')
         Write-Host (L '  5) Unlock all the fighters (after a first start of the game, game closed)' '  5) Débloquer tous les personnages (après un premier lancement du jeu, jeu fermé)')
-        Write-Host (L '  6) Français (passer le launcher en français)' '  6) English (switch the launcher to English)')
+        Write-Host (L '  6) Low spec mode on / off (weak or integrated GPU)' '  6) Mode PC peu puissant on / off (carte graphique faible ou intégrée)')
+        Write-Host (L '  7) Français (passer le launcher en français)' '  7) English (switch the launcher to English)')
         $m = "$(Read-Host (L '  Your choice [1]' '  Ton choix [1]'))".Trim()
-        if ($m -eq '6') { Set-Language $(if ($Script:Lang -eq 'fr') { 'en' } else { 'fr' }); Log "language $Script:Lang"; & $header; continue }
-        $Mode = @{ '2' = 'play'; '3' = 'diag'; '4' = 'dlc'; '5' = 'unlock' }[$m]
+        if ($m -eq '7') { Set-Language $(if ($Script:Lang -eq 'fr') { 'en' } else { 'fr' }); Log "language $Script:Lang"; & $header; continue }
+        $Mode = @{ '2' = 'play'; '3' = 'diag'; '4' = 'dlc'; '5' = 'unlock'; '6' = 'lowspec' }[$m]
         if (-not $Mode) { $Mode = 'install' }
     }
     $quietInputs = $false
@@ -730,6 +766,7 @@ try {
     $Script:Info['Git'] = $Script:Git
     $lr = Split-Path $PSScriptRoot -Parent     # the launcher's clone of its repository: which revision ran
     if (Test-Path -LiteralPath (Join-Path $lr '.git')) { $Script:Info['Launcher (git)'] = (Run-Native { & $Script:Git -C $lr log -1 '--format=%h %cs' }) | Select-Object -First 1 }
+    if ($Mode -eq 'lowspec') { Set-LowSpec; Read-Host (L 'Enter to close' 'Entrée pour fermer'); exit 0 }
     if ($Mode -eq 'unlock') { Unlock-Fighters; Write-Report 'OK'; Read-Host (L 'Enter to close' 'Entrée pour fermer'); exit 0 }
     if ($Mode -eq 'play') {
         if (Find-Repo $false) {
