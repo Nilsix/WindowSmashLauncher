@@ -4,7 +4,7 @@ rem github.com/OpenSmash-Ultimate/ssbu-recomp) from YOUR files, at the version p
 rem On the first start it installs Git if missing and downloads the launcher (github.com/Nilsix/WindowSmashLauncher)
 rem into %LOCALAPPDATA%\WindowSmashLauncher. At every start it updates itself (git) and, when it changed, closes and
 rem starts again in its new version. Then it runs the kit (kit-opensmash\os_setup.ps1 of the repository).
-rem Optional argument: install | play | diag | dlc | unlock | lowspec (none: the menu). English, or French (menu 7).
+rem Optional argument: install | play | diag | dlc | unlock | lowspec | play-norollback (none: the menu). English, or French (menu 7).
 setlocal
 set "WSL_SELF=%~f0"
 set "WSL_DIR=%~dp0"

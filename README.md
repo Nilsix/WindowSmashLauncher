@@ -99,7 +99,7 @@ Vulkan) avec un **rollback netcode** expérimental. Son launcher marche comme ce
 3. À la fin : raccourcis **Smash Ultimate (OpenSmash)** (lance le jeu en vérifiant la version) et **OpenSmash
    Launcher** (le menu).
 
-Le **rollback est toujours activé** quand le jeu est lancé par le launcher. Il sert dans les rooms **Local Wireless à 2
+Le **rollback est activé** quand le jeu est lancé par le raccourci ou l'option 2 ; l'option 8 lance le jeu sans. Il sert dans les rooms **Local Wireless à 2
 joueurs** qui l'ont tous les deux ; les rooms à plus de 2 joueurs et les combats locaux se jouent comme d'habitude.
 OpenSmash a son propre lobby : les joueurs WindowSmash et OpenSmash ne se voient pas, choisissez le même entre amis.
 
@@ -112,6 +112,7 @@ OpenSmash a son propre lobby : les joueurs WindowSmash et OpenSmash ne se voient
 | 5) Débloquer tous les personnages | Les 74 personnages de base dans ta sauvegarde (les DLC restent au jeu). Après un premier lancement du jeu, jeu fermé ; une copie de la sauvegarde d'avant est gardée dans `build\save_backups`. |
 | 6) Mode PC peu puissant | On / off : résolution interne réduite de moitié et shaders chargés au fil des chargements (moins de mémoire), pour une carte graphique faible ou intégrée. |
 | 7) Français / English | Même réglage de langue que le launcher WindowSmash. |
+| 8) Lancer le jeu sans rollback | Le netcode d'origine du jeu, pour un PC qui rame avec le rollback. Pour comparer, mettez-le tous les deux. |
 
 N'utilise pas `Install SSBU.bat` ni les raccourcis « SSBU native » d'OpenSmash : ils le mettraient à jour au-delà de
 la version du groupe. Il faut une carte graphique avec un pilote **Vulkan 1.3**.
