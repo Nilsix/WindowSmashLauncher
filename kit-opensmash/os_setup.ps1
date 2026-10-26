@@ -18,15 +18,16 @@
 # After a version change the build repeats from the step OpenSmash's own self-update would repeat (scripts\update.py's
 # rebuild_advice on the changed files, passed with install.py's --reexec), counted from the oldest version not built yet
 # (opensmash-rebuild.txt), so an update stopped half way is finished at the next start.
-# Messages: English, or French when chosen (menu 5, kept in %LOCALAPPDATA%\WindowSmash-setup\lang.txt, the same file as
+# Messages: English, or French when chosen (menu 6, kept in %LOCALAPPDATA%\WindowSmash-setup\lang.txt, the same file as
 # the WindowSmash kit's): every message is written as L 'English' 'French'. The report and the log stay in English.
-# Modes (-Mode, the launcher's argument): install, play, diag, dlc (menu 4: add my DLC); none: the menu.
+# Modes (-Mode, the launcher's argument): install, play, diag, dlc (menu 4: add my DLC), unlock (menu 5: all fighters);
+# none: the menu.
 # Test-only environment: WS_STOP_AFTER=repo|revision|python|prepare, WS_NO_NOTEPAD, WS_REPORT_DIR, WS_INPUTS_JSON
 # (another inputs.json).
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.0 (2026-10-26)'
+$KitVersion = '1.1 (2026-10-26)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -81,6 +82,8 @@ function Hint([string]$code) {
         'E43' { L "The update is not right: the group plays the $EXPECT_VERSION update (.nsp), dumped from your up-to-date Switch. Start again: the launcher asks for it." "La mise à jour ne convient pas : le groupe joue avec l'update $EXPECT_VERSION (.nsp), dumpée de ta Switch à jour. Relance : le launcher te la demande." }
         'E60' { L "OpenSmash's installer stopped: the end of its log is in the report. Start the launcher again: it carries on where it stopped." "L'installateur d'OpenSmash s'est arrêté : la fin de son log est dans le rapport. Relance le launcher : il reprend où il en était." }
         'E70' { L "The game did not start." "Le jeu ne s'est pas lancé." }
+        'E80' { L "The fighters could not be unlocked: see the message above." "Les personnages n'ont pas pu être débloqués : voir le message au-dessus." }
+        'E81' { L "Close the game, then choose 5) again." "Ferme le jeu, puis choisis de nouveau 5)." }
         'E99' { L "Unexpected error of the script: send the report." "Erreur inattendue du script : envoie le rapport." }
         default { $null }
     }
@@ -504,6 +507,59 @@ function Invoke-OsInstall([string[]]$extra, [string]$name) {
     return (Run-Shown $Script:Py ($argv + $extra) $name)
 }
 
+# Menu 5: every fighter of the base roster selectable in the player's own save (save_no 0-73; the DLC fighters are left
+# to the game, which unlocks them from their add-on contents). The same edit as the WindowSmash launcher's option 4, on
+# the 13.0.5 save layout (system_data.bin, 0x5B4AF8 bytes): FLAGS at 0x53FF40, 8 bytes per fighter ([0] 1 = selectable,
+# [1..3] challenger state, [4] the order fighters were met), RECORDS at 0x54FEA8, the "joined the battle" milestone
+# (bits 0-11 year, 12-15 month, 16-20 day, 21-25 hour, 26-31 minute, 32-37 second, 48-55 how = 3, 63 set). OpenSmash keeps
+# the committed save in <build>\saves\save; a pending save.commit is applied by the game at its next start, over any
+# edit, and a running game rewrites the save: both are refused. A copy goes to <build>\save_backups first.
+function Unlock-Fighters {
+    Title (L 'Unlock all the fighters' 'Débloquer tous les personnages')
+    if (-not (Find-Repo $false)) { Fail 'E80' (L 'OpenSmash is not installed yet: choose 1) Install first' 'OpenSmash n''est pas encore installé : choisis d''abord 1) Installer') }
+    $v = Get-MainVersion (Join-Path (Get-BuildDir) 'dump\exefs\main')
+    if ($v -ne '13.0.5') { Fail 'E80' (L "the game is $v : this save layout is known for 13.0.5 only, nothing is changed" "le jeu est en $v : cette sauvegarde n'est connue qu'en 13.0.5, rien n'est changé") }
+    $saves = Join-Path (Get-BuildDir) 'saves'
+    $save = Join-Path $saves 'save\save_data\system_data.bin'
+    if (-not (Test-Path -LiteralPath $save)) { Fail 'E80' (L 'no save yet: start the game once up to the main menu, close it, then try again' 'pas encore de sauvegarde : lance le jeu une fois jusqu''au menu principal, ferme-le, puis recommence') }
+    if (Get-Process ssbu_native -ErrorAction SilentlyContinue) { Fail 'E81' (L 'the game is running: close it first (it rewrites its save when it quits)' 'le jeu est lancé : ferme-le d''abord (il réécrit sa sauvegarde en quittant)') }
+    if (Test-Path -LiteralPath (Join-Path $saves 'save.commit')) { Fail 'E81' (L 'the game left a save write to finish: start it once up to the main menu, close it, then try again' 'le jeu a laissé une écriture de sauvegarde à finir : lance-le une fois jusqu''au menu principal, ferme-le, puis recommence') }
+    $SIZE = 0x5B4AF8; $FLAGS = 0x53FF40; $REC = 0x54FEA8; $count = 74; $starters = 0, 1, 2, 3, 5, 6, 7, 8
+    $d = [IO.File]::ReadAllBytes($save)
+    $odd = { Fail 'E80' (L 'this save does not look as expected: nothing is changed' 'cette sauvegarde n''a pas la forme attendue : rien n''est changé') }
+    if ($d.Length -ne $SIZE -or [BitConverter]::ToUInt32($d, 0) -ne $SIZE) { & $odd }
+    foreach ($n in $starters) { if ($d[$FLAGS + 8 * $n] -ne 1) { & $odd } }
+    $order = 0
+    for ($n = 0; $n -lt $count; $n++) {
+        $f = $FLAGS + 8 * $n
+        if ($d[$f] -gt 1 -or $d[$f + 5] -or $d[$f + 6] -or $d[$f + 7]) { & $odd }
+        $r = [BitConverter]::ToUInt64($d, $REC + 8 * $n)
+        if ($r -and -not ($r -shr 63)) { & $odd }
+        if ($d[$f + 4] -gt $order) { $order = $d[$f + 4] }
+    }
+    $t = Get-Date
+    [uint64]$joined = [uint64]$t.Year -bor ([uint64]$t.Month -shl 12) -bor ([uint64]$t.Day -shl 16) -bor ([uint64]$t.Hour -shl 21) -bor
+                   ([uint64]$t.Minute -shl 26) -bor ([uint64]$t.Second -shl 32) -bor ([uint64]3 -shl 48) -bor ([uint64]1 -shl 63)
+    $added = 0
+    for ($n = 0; $n -lt $count; $n++) {
+        $f = $FLAGS + 8 * $n
+        if ($d[$f]) { continue }
+        if (-not $d[$f + 4]) { $order++; $d[$f + 4] = [byte]$order }
+        $d[$f] = 1; $d[$f + 1] = 0; $d[$f + 2] = 0; $d[$f + 3] = 0
+        if (-not [BitConverter]::ToUInt64($d, $REC + 8 * $n)) { [BitConverter]::GetBytes($joined).CopyTo($d, $REC + 8 * $n) }
+        $added++
+    }
+    if (-not $added) { Ok (L 'every fighter is already unlocked' 'tous les personnages sont déjà débloqués'); Set-Step 'Unlock' 'OK' 'nothing to do'; return }
+    $bk = Join-Path (Get-BuildDir) 'save_backups'
+    New-Item -ItemType Directory -Force $bk | Out-Null
+    $copy = Join-Path $bk ('system_data.bin.before-unlock-' + (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    Copy-Item -LiteralPath $save -Destination $copy
+    [IO.File]::WriteAllBytes($save, $d)
+    Ok (L "$added fighters unlocked (the save from before: $copy)" "$added personnages débloqués (la sauvegarde d'avant : $copy)")
+    Say (L '  At the next start the game shows the "joined the battle" messages once (X skips them).' '  Au prochain lancement, le jeu affiche une fois les messages « rejoint la bataille » (X pour passer).')
+    Set-Step 'Unlock' 'OK' "$added fighters"
+}
+
 # A game unpacked earlier from another update (an OpenSmash install made with 13.0.4) is removed, so that install.py
 # makes it again from the files given. -> $true when removed
 function Remove-StaleDump([string]$dump) {
@@ -661,10 +717,11 @@ try {
         Write-Host (L '  2) Start the game (rollback ON)' '  2) Lancer le jeu (rollback ON)')
         Write-Host (L '  3) Diagnosis only (makes the report, installs nothing)' '  3) Diagnostic seulement (crée le rapport sans rien installer)')
         Write-Host (L '  4) Add my DLC (bought, dumped from your Switch)' '  4) Ajouter mes DLC (achetés, dumpés de ta Switch)')
-        Write-Host (L '  5) Français (passer le launcher en français)' '  5) English (switch the launcher to English)')
+        Write-Host (L '  5) Unlock all the fighters (after a first start of the game, game closed)' '  5) Débloquer tous les personnages (après un premier lancement du jeu, jeu fermé)')
+        Write-Host (L '  6) Français (passer le launcher en français)' '  6) English (switch the launcher to English)')
         $m = "$(Read-Host (L '  Your choice [1]' '  Ton choix [1]'))".Trim()
-        if ($m -eq '5') { Set-Language $(if ($Script:Lang -eq 'fr') { 'en' } else { 'fr' }); Log "language $Script:Lang"; & $header; continue }
-        $Mode = @{ '2' = 'play'; '3' = 'diag'; '4' = 'dlc' }[$m]
+        if ($m -eq '6') { Set-Language $(if ($Script:Lang -eq 'fr') { 'en' } else { 'fr' }); Log "language $Script:Lang"; & $header; continue }
+        $Mode = @{ '2' = 'play'; '3' = 'diag'; '4' = 'dlc'; '5' = 'unlock' }[$m]
         if (-not $Mode) { $Mode = 'install' }
     }
     $quietInputs = $false
@@ -673,6 +730,7 @@ try {
     $Script:Info['Git'] = $Script:Git
     $lr = Split-Path $PSScriptRoot -Parent     # the launcher's clone of its repository: which revision ran
     if (Test-Path -LiteralPath (Join-Path $lr '.git')) { $Script:Info['Launcher (git)'] = (Run-Native { & $Script:Git -C $lr log -1 '--format=%h %cs' }) | Select-Object -First 1 }
+    if ($Mode -eq 'unlock') { Unlock-Fighters; Write-Report 'OK'; Read-Host (L 'Enter to close' 'Entrée pour fermer'); exit 0 }
     if ($Mode -eq 'play') {
         if (Find-Repo $false) {
             $head = Get-Head

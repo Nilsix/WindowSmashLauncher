@@ -4,7 +4,7 @@ rem github.com/OpenSmash-Ultimate/ssbu-recomp) from YOUR files, at the version p
 rem On the first start it installs Git if missing and downloads the launcher (github.com/Nilsix/WindowSmashLauncher)
 rem into %LOCALAPPDATA%\WindowSmashLauncher. At every start it updates itself (git) and, when it changed, closes and
 rem starts again in its new version. Then it runs the kit (kit-opensmash\os_setup.ps1 of the repository).
-rem Optional argument: install | play | diag | dlc (none: the menu). English, or French (menu 5).
+rem Optional argument: install | play | diag | dlc | unlock (none: the menu). English, or French (menu 6).
 setlocal
 set "WSL_SELF=%~f0"
 set "WSL_DIR=%~dp0"
@@ -36,7 +36,7 @@ exit /b !RC!
 # 3. The file the user started (Desktop, Downloads...) is kept identical to the repository's copy.
 # 4. After a change (and after the first clone), the window closes and the repository's copy of this file starts in a
 #    new window (WSL_RELAUNCHED stops a second restart).
-# 5. kit-opensmash\os_setup.ps1 of the repository does the rest (install, play, diag, dlc).
+# 5. kit-opensmash\os_setup.ps1 of the repository does the rest (install, play, diag, dlc, unlock).
 # Exit codes for the .bat: 0 done, 10 a failure already reported (it paused), 20 restarted in a new window.
 # Test-only environment: WSL_NO_RELAUNCH=1 (carry on in the same window after an update), WSL_REPO_URL (another remote),
 # WSL_CLONE_DIR (another clone folder; never fake LOCALAPPDATA instead).
