@@ -13,21 +13,21 @@
 # OpenSmash's private Python (its scripts\bootstrap.ps1 -NoLaunch) -> the game files (inputs.json, shared with the
 # WindowSmash kit) -> its scripts\install.py --prepare-only (the unpacked game) -> the game program must be 13.0.5's (its
 # build id) -> install.py again (the build) -> shortcuts through the launcher (play mode checks the version at every
-# start) -> the game with the rollback netcode on (rollback = on written before every start). Menu 8 starts it once
-# without rollback (asked for by the owner after a laggy online match on the 2700X, 2026-10-26).
+# start) -> the game WITHOUT the rollback netcode (rollback = off written before every start; the owner's choice after
+# rollback kept a 2700X under 40 fps online, 2026-10-26). Menu 8 starts it with rollback (rollback = on).
 # After a version change the build repeats from the step OpenSmash's own self-update would repeat (scripts\update.py's
 # rebuild_advice on the changed files, passed with install.py's --reexec), counted from the oldest version not built yet
 # (opensmash-rebuild.txt), so an update stopped half way is finished at the next start.
 # Messages: English, or French when chosen (menu 7, kept in %LOCALAPPDATA%\WindowSmash-setup\lang.txt, the same file as
 # the WindowSmash kit's): every message is written as L 'English' 'French'. The report and the log stay in English.
-# Modes (-Mode, the launcher's argument): install, play, diag, dlc (menu 4: add my DLC), unlock (menu 5: all fighters), lowspec (menu 6), play-norollback (menu 8);
+# Modes (-Mode, the launcher's argument): install, play, diag, dlc (menu 4: add my DLC), unlock (menu 5: all fighters), lowspec (menu 6), play-rollback (menu 8; play-norollback = play);
 # none: the menu.
 # Test-only environment: WS_STOP_AFTER=repo|revision|python|prepare, WS_NO_NOTEPAD, WS_REPORT_DIR, WS_INPUTS_JSON
 # (another inputs.json).
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.5 (2026-10-26)'
+$KitVersion = '1.6 (2026-10-26)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -53,7 +53,7 @@ $WsRepoTxt = Join-Path $HomeDir 'repo.txt'                            # (the Win
 $LangTxt  = Join-Path $HomeDir 'lang.txt'
 $NEED_GB  = 30
 New-Item -ItemType Directory -Force $LogDir | Out-Null
-$Script:Repo = $null; $Script:Git = $null; $Script:Py = $null; $Script:Inputs = @{}; $Script:Rollback = $true
+$Script:Repo = $null; $Script:Git = $null; $Script:Py = $null; $Script:Inputs = @{}; $Script:Rollback = $false
 $Script:Steps = New-Object System.Collections.Specialized.OrderedDictionary
 $Script:Info = [ordered]@{}; $Script:Warnings = New-Object System.Collections.ArrayList; $Script:Extra = New-Object System.Collections.ArrayList
 $Script:LastLog = $null
@@ -795,8 +795,8 @@ function Set-LowSpec {
 # kit's check); a failure's report holds the end of the newest build\logs\game_*.log (run.py's game log).
 function Start-Game {
     $play = Join-Path $Script:Repo 'Play SSBU.bat'
-    if ($Script:Rollback) { if (Set-Rollback $true) { Say (L '  Rollback netcode: ON (1-on-1 Local Wireless rooms where both players have it on; other fights as usual).' '  Rollback : ON (rooms Local Wireless à 2 où les deux joueurs l''ont ; les autres combats comme d''habitude).') } }
-    elseif (Set-Rollback $false) { Say (L '  Rollback netcode: OFF for this start (the game''s own online netcode; both players should have it off to compare).' '  Rollback : OFF pour ce lancement (netcode d''origine du jeu ; mettez-le OFF tous les deux pour comparer).') }
+    if ($Script:Rollback) { if (Set-Rollback $true) { Say (L '  Rollback netcode: ON, EXPERIMENTAL (1-on-1 Local Wireless rooms where both players have it on; other fights as usual).' '  Rollback : ON, EXPÉRIMENTAL (rooms Local Wireless à 2 où les deux joueurs l''ont ; les autres combats comme d''habitude).') } }
+    elseif (Set-Rollback $false) { Say (L '  Rollback netcode: OFF (the game''s own online netcode; menu 8 of the launcher starts with rollback).' '  Rollback : OFF (netcode d''origine du jeu ; l''option 8 du launcher lance avec le rollback).') }
     $gameLog = { Get-ChildItem -LiteralPath (Join-Path (Get-BuildDir) 'logs') -Filter 'game_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1 | ForEach-Object { $_.FullName } }
     try {
         $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', "`"$play`"" -WorkingDirectory $Script:Repo -PassThru
@@ -827,16 +827,16 @@ try {
     while (-not $Mode) {
         Write-Host ''
         Write-Host (L '  1) Install / update' '  1) Installer / mettre à jour')
-        Write-Host (L '  2) Start the game (rollback ON)' '  2) Lancer le jeu (rollback ON)')
+        Write-Host (L '  2) Start the game' '  2) Lancer le jeu')
         Write-Host (L '  3) Diagnosis only (makes the report, installs nothing)' '  3) Diagnostic seulement (crée le rapport sans rien installer)')
         Write-Host (L '  4) Add my DLC (bought, dumped from your Switch)' '  4) Ajouter mes DLC (achetés, dumpés de ta Switch)')
         Write-Host (L '  5) Unlock all the fighters (after a first start of the game, game closed)' '  5) Débloquer tous les personnages (après un premier lancement du jeu, jeu fermé)')
         Write-Host (L '  6) Low spec mode on / off (weak or integrated GPU)' '  6) Mode PC peu puissant on / off (carte graphique faible ou intégrée)')
         Write-Host (L '  7) Français (passer le launcher en français)' '  7) English (switch the launcher to English)')
-        Write-Host (L '  8) Start the game WITHOUT rollback (the game''s own netcode, for a slower PC)' '  8) Lancer le jeu SANS rollback (netcode d''origine du jeu, pour un PC moins puissant)')
+        Write-Host (L '  8) Start the game WITH rollback (experimental, needs a strong CPU; both players on)' '  8) Lancer le jeu AVEC rollback (expérimental, demande un bon processeur ; les deux joueurs)')
         $m = "$(Read-Host (L '  Your choice [1]' '  Ton choix [1]'))".Trim()
         if ($m -eq '7') { Set-Language $(if ($Script:Lang -eq 'fr') { 'en' } else { 'fr' }); Log "language $Script:Lang"; & $header; continue }
-        $Mode = @{ '2' = 'play'; '3' = 'diag'; '4' = 'dlc'; '5' = 'unlock'; '6' = 'lowspec'; '8' = 'play-norollback' }[$m]
+        $Mode = @{ '2' = 'play'; '3' = 'diag'; '4' = 'dlc'; '5' = 'unlock'; '6' = 'lowspec'; '8' = 'play-rollback' }[$m]
         if (-not $Mode) { $Mode = 'install' }
     }
     $quietInputs = $false
@@ -847,7 +847,8 @@ try {
     if (Test-Path -LiteralPath (Join-Path $lr '.git')) { $Script:Info['Launcher (git)'] = (Run-Native { & $Script:Git -C $lr log -1 '--format=%h %cs' }) | Select-Object -First 1 }
     if ($Mode -eq 'lowspec') { Set-LowSpec; Read-Host (L 'Enter to close' 'Entrée pour fermer'); exit 0 }
     if ($Mode -eq 'unlock') { Unlock-Fighters; Write-Report 'OK'; Read-Host (L 'Enter to close' 'Entrée pour fermer'); exit 0 }
-    if ($Mode -eq 'play-norollback') { $Script:Rollback = $false; $Mode = 'play' }
+    if ($Mode -eq 'play-rollback') { $Script:Rollback = $true; $Mode = 'play' }
+    if ($Mode -eq 'play-norollback') { $Mode = 'play' }
     if ($Mode -eq 'play') {
         if (Find-Repo $false) {
             $head = Get-Head
@@ -884,9 +885,9 @@ try {
     Title (L 'Done' 'Terminé')
     Set-Shortcuts
     Write-Report 'OK'
-    Say (L "  To play: the 'Smash Ultimate (OpenSmash)' shortcut (it checks the version at every start, rollback ON)." "  Pour jouer : le raccourci 'Smash Ultimate (OpenSmash)' (il vérifie la version à chaque lancement, rollback ON).")
-    Say (L '  Rollback plays 1-on-1 Local Wireless rooms where both players have it on; other rooms and local fights play as usual.' '  Le rollback sert dans les rooms Local Wireless à 2 où les deux joueurs l''ont ; les autres rooms et les combats locaux jouent comme d''habitude.')
-    Say (L '  The launcher turns rollback on at every start. In the game: F1 = settings.' '  Le launcher active le rollback à chaque lancement. Dans le jeu : F1 = réglages.')
+    Say (L "  To play: the 'Smash Ultimate (OpenSmash)' shortcut (it checks the version at every start)." "  Pour jouer : le raccourci 'Smash Ultimate (OpenSmash)' (il vérifie la version à chaque lancement).")
+    Say (L '  Rollback (experimental): launcher option 8, both players; it plays 1-on-1 Local Wireless rooms.' '  Rollback (expérimental) : option 8 du launcher, pour les deux joueurs ; il sert dans les rooms Local Wireless à 2.')
+    Say (L '  In the game: F1 = settings.' '  Dans le jeu : F1 = réglages.')
     Say (L '  Do not use OpenSmash''s own "Install SSBU.bat": it would update OpenSmash past your friends'' version.' '  N''utilise pas le "Install SSBU.bat" d''OpenSmash : il mettrait OpenSmash à jour au-delà de la version de tes amis.')
     if (Ask-YesNo (L '  Start the game now?' '  Je lance le jeu maintenant ?')) { Start-Game }
     Read-Host (L 'Enter to close' 'Entrée pour fermer')
