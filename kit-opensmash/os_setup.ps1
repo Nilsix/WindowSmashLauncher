@@ -27,7 +27,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.3 (2026-10-26)'
+$KitVersion = '1.4 (2026-10-26)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -737,6 +737,13 @@ function Diagnose-Game {
     $log = Get-ChildItem -LiteralPath (Join-Path (Get-BuildDir) 'logs') -Filter 'game_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
     if ($log) {
         $lines = Get-Content -LiteralPath $log.FullName
+        $dev = $lines | Where-Object { $_ -match '^nvn_vk: using device' } | Select-Object -First 1
+        if ($dev) {
+            $gname = $dev -replace '^nvn_vk: using device \d+: ', '' -replace ' \(loader.*', ''
+            $Script:Info['GPU used by the game'] = $gname
+            # older or small cards (4 GB of video memory or less) run short with every shader and the full resolution
+            if ($gname -match 'GTX (9\d\d|10[0-6]\d|1650)|RX (4\d0|5[0-6]0)|MX\d{3}|Vega|Radeon\(TM\) Graphics|Intel') { & $tip "The game runs on a modest GPU ($gname): turn low spec mode on (menu 6)." "Le jeu tourne sur une carte graphique modeste ($gname) : active le mode PC peu puissant (menu 6)." }
+        }
         [void]$Script:Extra.Add(''); [void]$Script:Extra.Add("--- $($log.Name): problems and frame times")
         foreach ($x in ($lines | Where-Object { $_ -match 'error|fail|lost|out of memory|watchdog|freeze|nvn_perf: frames|fps avg' } | Select-Object -Last 40)) { [void]$Script:Extra.Add($x) }
         [void]$Script:Extra.Add(''); [void]$Script:Extra.Add("--- $($log.Name): end")
