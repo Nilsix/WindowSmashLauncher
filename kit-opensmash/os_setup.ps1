@@ -27,7 +27,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.2 (2026-10-26)'
+$KitVersion = '1.3 (2026-10-26)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -55,7 +55,7 @@ $NEED_GB  = 30
 New-Item -ItemType Directory -Force $LogDir | Out-Null
 $Script:Repo = $null; $Script:Git = $null; $Script:Py = $null; $Script:Inputs = @{}
 $Script:Steps = New-Object System.Collections.Specialized.OrderedDictionary
-$Script:Info = [ordered]@{}; $Script:Warnings = New-Object System.Collections.ArrayList
+$Script:Info = [ordered]@{}; $Script:Warnings = New-Object System.Collections.ArrayList; $Script:Extra = New-Object System.Collections.ArrayList
 $Script:LastLog = $null
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 $env:PYTHONIOENCODING = 'utf-8'; $env:PYTHONUNBUFFERED = '1'
@@ -172,6 +172,7 @@ function Write-Report([string]$status, [string]$code = '', [string]$message = ''
     & $add ''
     & $add '--- System and tools'
     foreach ($k in $Script:Info.Keys) { & $add ("  {0,-22} {1}" -f $k, (Redact ([string]$Script:Info[$k]))) }
+    foreach ($x in $Script:Extra) { & $add (Redact $x) }
     if ($Script:LastLog) { & $add ''; & $add "--- End of the step's log ($(Redact $Script:LastLog))"; & $add (Redact (Tail $Script:LastLog 80)) }
     & $add ''
     & $add '--- End of the main log'
@@ -679,6 +680,75 @@ function Set-Rollback([bool]$on) {
     } catch { Warn (L "W72 rollback setting not written ($($_.Exception.Message))" "W72 réglage du rollback non écrit ($($_.Exception.Message))"); return $false }
 }
 
+# Menu 3, when the game lags or crashes: the PC (CPU, RAM, GPU and driver, the build folder's disk), the settings of
+# graphics.ini, the game's own crash and freeze reports (work\ssbu_native_crash.txt / _freeze.txt, a minidump beside them)
+# and the newest game log go into the report; what they point at is said as advice.
+function Diagnose-Game {
+    Title (L 'Game diagnosis (lag, crash)' 'Diagnostic du jeu (lag, crash)')
+    $advice = New-Object System.Collections.ArrayList
+    $tip = { param($en, $fr) $m = L $en $fr; $s = $m -replace ' \(.*?\)', ''; if (-not ($advice | Where-Object { ($_ -replace ' \(.*?\)', '') -eq $s })) { [void]$advice.Add($m) } }
+    $os = Get-CimInstance Win32_OperatingSystem
+    $ram = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB
+    $freeRam = $os.FreePhysicalMemory / 1MB
+    $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+    $Script:Info['Windows'] = "$($os.Caption) $($os.Version)"
+    $Script:Info['CPU'] = "$($cpu.Name.Trim()) ($($cpu.NumberOfLogicalProcessors) threads)"
+    $Script:Info['RAM'] = "{0:N1} GB, {1:N1} GB free now" -f $ram, $freeRam
+    if ($ram -lt 12) { & $tip "Only $([int]$ram) GB of RAM: turn low spec mode on (menu 6) and close other programs." "Seulement $([int]$ram) Go de RAM : active le mode PC peu puissant (menu 6) et ferme les autres programmes." }
+    $gpus = @(Get-CimInstance Win32_VideoController)
+    $i = 0
+    foreach ($g in $gpus) { $i++; $Script:Info["GPU $i"] = "$($g.Name), driver $($g.DriverVersion) ($(if ($g.DriverDate) { $g.DriverDate.ToString('yyyy-MM-dd') }))" }
+    if (-not ($gpus | Where-Object { $_.Name -match 'NVIDIA|Radeon RX|Arc' })) { & $tip 'No dedicated graphics card found: turn low spec mode on (menu 6).' 'Pas de carte graphique dédiée trouvée : active le mode PC peu puissant (menu 6).' }
+    $old = $gpus | Where-Object { $_.Name -notmatch 'Virtual|Parsec|Basic|Remote|Meta|Mirror' -and $_.DriverDate -and $_.DriverDate -lt (Get-Date).AddMonths(-12) }
+    if ($old) { & $tip "The graphics driver is over a year old ($($old[0].Name)): install the newest one from NVIDIA / AMD / Intel." "Le pilote graphique a plus d'un an ($($old[0].Name)) : installe le dernier depuis le site NVIDIA / AMD / Intel." }
+    try {
+        $letter = (Get-Item -LiteralPath (Get-BuildDir)).PSDrive.Name
+        $pd = Get-Partition -DriveLetter $letter | Get-Disk | ForEach-Object { Get-PhysicalDisk -DeviceNumber $_.Number }
+        $Script:Info['Build folder disk'] = "$letter`: $($pd.FriendlyName), $($pd.MediaType), $($pd.BusType)"
+        if ($pd.MediaType -eq 'HDD' -or $pd.BusType -eq 'USB') { & $tip "The game is on a slow disk ($letter`: $($pd.MediaType) $($pd.BusType)): loading stutters. Move it to an SSD (ask in the group)." "Le jeu est sur un disque lent ($letter`: $($pd.MediaType) $($pd.BusType)) : saccades aux chargements. Mets-le sur un SSD (demande dans le groupe)." }
+    } catch { $Script:Info['Build folder disk'] = "unknown ($($_.Exception.Message))" }
+    $ini = Join-Path (Get-BuildDir) 'config\graphics.ini'
+    if (Test-Path -LiteralPath $ini) {
+        $Script:Info['graphics.ini'] = ((Get-Content -LiteralPath $ini | Where-Object { $_ -match '^[a-z_]+ *=' } | ForEach-Object { $_ -replace '\s*=\s*', '=' }) -join ' ')
+        # shader_load = start holds every shader of the game in memory (about 10 GB measured on 2026-10-26, a minute of loading)
+        if ($ram -lt 24 -and -not ((Get-Content -LiteralPath $ini) -match '^[ \t]*shader_load[ \t]*=[ \t]*loading')) {
+            if (Set-IniKey 'shader_load' 'loading') { & $tip "All shaders were loaded at start (about 10 GB of memory, a minute of loading) on a PC with $([int]$ram) GB: switched to loading them at each loading screen." "Tous les shaders étaient chargés au démarrage (environ 10 Go de mémoire, une minute de chargement) sur un PC de $([int]$ram) Go : passé au chargement à chaque écran de chargement." }
+        }
+    }
+    [void]$Script:Extra.Add('')
+    $work = Join-Path (Get-BuildDir) 'work'
+    foreach ($r in 'ssbu_native_crash.txt', 'ssbu_native_freeze.txt') {
+        $p = Join-Path $work $r
+        if (Test-Path -LiteralPath $p) {
+            $f = Get-Item -LiteralPath $p
+            $t = Get-Content -LiteralPath $p -Raw
+            $k = $t.LastIndexOf('=== ')          # the newest report: its header and first lines (the module list follows)
+            [void]$Script:Extra.Add("--- $r ($($f.LastWriteTime.ToString('yyyy-MM-dd HH:mm')), newest report)")
+            foreach ($x in (($t.Substring([math]::Max(0, $k)) -split "`r?`n") | Select-Object -First 40)) { [void]$Script:Extra.Add($x) }
+            $hooks = @([regex]::Matches($t, '(?im)\b(medal-hook64|graphics-hook64|RTSSHooks64|DiscordHook64|overlay64|GameOverlayRenderer64|nvspcap64|fraps64)\.dll') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+            if ($hooks) { & $tip "Overlay or recording programs were inside the game ($($hooks -join ', ')): close Medal, OBS, RivaTuner, Discord overlay and the like, then try again." "Des programmes d'overlay ou d'enregistrement étaient dans le jeu ($($hooks -join ', ')) : ferme Medal, OBS, RivaTuner, l'overlay Discord, etc., puis réessaie." }
+            if ($t -match 'DEVICE_LOST|device lost|device loss') { & $tip 'The graphics card stopped answering (device lost): update the graphics driver, then try low spec mode (menu 6).' 'La carte graphique a cessé de répondre (device lost) : mets à jour le pilote graphique, puis essaie le mode PC peu puissant (menu 6).' }
+            elseif ($t -match 'out of memory|0xc0000017|allocation') { & $tip 'Out of memory: close other programs and turn low spec mode on (menu 6).' 'Mémoire insuffisante : ferme les autres programmes et active le mode PC peu puissant (menu 6).' }
+            elseif ($r -match 'crash') { & $tip "The game crashed ($r): send this report to the group." "Le jeu a planté ($r) : envoie ce rapport au groupe." }
+        }
+    }
+    $dmp = @(Get-ChildItem -LiteralPath $work -Filter '*_last.dmp' -ErrorAction SilentlyContinue)
+    if ($dmp) { $Script:Info['Minidumps'] = ($dmp | ForEach-Object { "$($_.FullName) ($([int]($_.Length / 1MB)) MB)" }) -join '; ' }
+    $log = Get-ChildItem -LiteralPath (Join-Path (Get-BuildDir) 'logs') -Filter 'game_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+    if ($log) {
+        $lines = Get-Content -LiteralPath $log.FullName
+        [void]$Script:Extra.Add(''); [void]$Script:Extra.Add("--- $($log.Name): problems and frame times")
+        foreach ($x in ($lines | Where-Object { $_ -match 'error|fail|lost|out of memory|watchdog|freeze|nvn_perf: frames|fps avg' } | Select-Object -Last 40)) { [void]$Script:Extra.Add($x) }
+        [void]$Script:Extra.Add(''); [void]$Script:Extra.Add("--- $($log.Name): end")
+        foreach ($x in ($lines | Select-Object -Last 30)) { [void]$Script:Extra.Add($x) }
+        $slow = @($lines | Where-Object { $_ -match 'fps avg ([\d.]+)' } | ForEach-Object { [double]([regex]::Match($_, 'fps avg ([\d.]+)').Groups[1].Value) } | Where-Object { $_ -lt 50 })
+        if ($slow.Count -ge 3) { & $tip 'The game ran under 50 fps many times: close other programs, turn low spec mode on (menu 6); the first matches also prepare shaders.' 'Le jeu est souvent passé sous 50 fps : ferme les autres programmes, active le mode PC peu puissant (menu 6) ; les premières parties préparent aussi des shaders.' }
+    } else { [void]$Script:Extra.Add('(no game log yet)') }
+    if (-not $advice.Count) { & $tip 'Nothing obvious found: send this report to the group.' 'Rien d''évident trouvé : envoie ce rapport au groupe.' }
+    [void]$Script:Extra.Insert(0, '--- Advice'); $k = 1
+    foreach ($a in $advice) { [void]$Script:Extra.Insert($k++, "  $a"); Say "  -> $a" }
+}
+
 # key = value in the build's config\graphics.ini, written like Set-Rollback (the game's gfx_ini_set rule). -> $true
 function Set-IniKey([string]$key, [string]$v) {
     $ini = Join-Path (Get-BuildDir) 'config\graphics.ini'
@@ -700,7 +770,7 @@ function Set-IniKey([string]$key, [string]$v) {
 # Menu 6: low spec mode, for a weak or integrated GPU / little memory, switched on or off. On: OpenSmash's own "low"
 # profile (internal resolution 0.5, the game's texture filtering, vsync by the clock) and the shaders of a fighter or
 # stage loaded at its loading screen instead of all at the start (less memory). Off: every key as written, resolution 1.0,
-# all shaders at the start.
+# all shaders at the start only with 24 GB of RAM or more (they take about 10 GB).
 function Set-LowSpec {
     Title (L 'Low spec mode' 'Mode PC peu puissant')
     if (-not (Find-Repo $false)) { Fail 'E80' (L 'OpenSmash is not installed yet: choose 1) Install first' 'OpenSmash n''est pas encore installé : choisis d''abord 1) Installer') }
@@ -708,7 +778,7 @@ function Set-LowSpec {
     $on = (Test-Path -LiteralPath $ini) -and ((Get-Content -LiteralPath $ini) -match '^[ \t]*profile[ \t]*=[ \t]*low')
     Say (L "  Low spec mode is now $(if ($on) { 'ON' } else { 'OFF' })." "  Le mode PC peu puissant est actuellement $(if ($on) { 'ON' } else { 'OFF' }).")
     if (-not (Ask-YesNo (L "  Switch it $(if ($on) { 'OFF' } else { 'ON' })?" "  Je le passe en $(if ($on) { 'OFF' } else { 'ON' }) ?"))) { return }
-    if ($on) { $ok = (Set-IniKey 'profile' 'custom') -and (Set-IniKey 'resolution_scale' '1.0') -and (Set-IniKey 'shader_load' 'start') }
+    if ($on) { $ok = (Set-IniKey 'profile' 'custom') -and (Set-IniKey 'resolution_scale' '1.0') -and (Set-IniKey 'shader_load' $(if ((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory -ge 24GB) { 'start' } else { 'loading' })) }
     else { $ok = (Set-IniKey 'profile' 'low') -and (Set-IniKey 'shader_load' 'loading') }
     if ($ok) { Ok (L "low spec mode $(if ($on) { 'OFF' } else { 'ON' }) (from the next start of the game)" "mode PC peu puissant $(if ($on) { 'OFF' } else { 'ON' }) (au prochain lancement du jeu)") }
     Set-Step 'Low spec' 'OK' "$(if ($on) { 'off' } else { 'on' })"
@@ -786,6 +856,7 @@ try {
             $Script:Info['OpenSmash (git)'] = "$(Get-Head) (pinned: $OS_COMMIT)"
             $Script:Info['Game version'] = "unpacked: $(Get-MainVersion (Join-Path (Get-BuildDir) 'dump\exefs\main')); built: $(Get-BuiltVersion)"
             $Script:Info['Game exe'] = "$(Get-Exe) $(if (Test-Path -LiteralPath (Get-Exe)) { 'present' } else { 'missing' })"
+            Diagnose-Game
         }
         Write-Report 'DIAGNOSTIC'
         Say (L '  Report written on the Desktop: OpenSmash-setup-report.txt' '  Rapport écrit sur le Bureau : OpenSmash-setup-report.txt')
