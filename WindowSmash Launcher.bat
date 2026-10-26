@@ -1,9 +1,9 @@
 @echo off
-rem WindowSmash Launcher : installe, met a jour et lance WindowSmash (Super Smash Bros. Ultimate natif) avec TES fichiers.
-rem Au premier lancement il installe Git s'il manque et telecharge le launcher (github.com/Nilsix/WindowSmashLauncher)
-rem dans %LOCALAPPDATA%\WindowSmashLauncher. A chaque lancement il se met a jour (git pull) et, s'il a change, il se
-rem ferme et se relance dans sa nouvelle version. Il lance ensuite le kit (kit\ws_setup.ps1 du depot).
-rem Argument optionnel : install | play | diag | unlock | optimize (sans argument : menu).
+rem WindowSmash Launcher: installs, updates and starts WindowSmash (native Super Smash Bros. Ultimate) from YOUR files.
+rem On the first start it installs Git if missing and downloads the launcher (github.com/Nilsix/WindowSmashLauncher)
+rem into %LOCALAPPDATA%\WindowSmashLauncher. At every start it updates itself (git) and, when it changed, closes and
+rem starts again in its new version. Then it runs the kit (kit\ws_setup.ps1 of the repository).
+rem Optional argument: install | play | diag | unlock | optimize | dlc (none: the menu). English, or French (menu 7).
 setlocal
 set "WSL_SELF=%~f0"
 set "WSL_DIR=%~dp0"
@@ -16,13 +16,13 @@ rem the update replaces it (here or in the repository copy). Delayed expansion i
 rem lines above, so a "!" in the path of this file stays as it is.
 setlocal EnableDelayedExpansion
 (
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $t=[IO.File]::ReadAllText($env:WSL_SELF,[Text.Encoding]::UTF8); $m=[regex]::Match($t,'(?s)\r?\n#@@BEGIN boot\.ps1\r?\n(.*?)\r?\n#@@END boot\.ps1'); if(-not $m.Success){ throw 'launcher incomplet' }; $d=Join-Path $env:LOCALAPPDATA 'WindowSmashLauncher-boot'; New-Item -ItemType Directory -Force $d | Out-Null; $f=Join-Path $d ('boot-'+$PID+'.ps1'); [IO.File]::WriteAllText($f,$m.Groups[1].Value,(New-Object Text.UTF8Encoding $true)); & $f -Self $env:WSL_SELF -KitDir $env:WSL_DIR -Mode $env:WSL_MODE; $rc=$LASTEXITCODE; Remove-Item -LiteralPath $f -ErrorAction SilentlyContinue; exit $rc } catch { Write-Host ('Erreur au demarrage du launcher : '+$_.Exception.Message) -ForegroundColor Red; exit 2 }"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $t=[IO.File]::ReadAllText($env:WSL_SELF,[Text.Encoding]::UTF8); $m=[regex]::Match($t,'(?s)\r?\n#@@BEGIN boot\.ps1\r?\n(.*?)\r?\n#@@END boot\.ps1'); if(-not $m.Success){ throw 'launcher incomplet' }; $d=Join-Path $env:LOCALAPPDATA 'WindowSmashLauncher-boot'; New-Item -ItemType Directory -Force $d | Out-Null; $f=Join-Path $d ('boot-'+$PID+'.ps1'); [IO.File]::WriteAllText($f,$m.Groups[1].Value,(New-Object Text.UTF8Encoding $true)); & $f -Self $env:WSL_SELF -KitDir $env:WSL_DIR -Mode $env:WSL_MODE; $rc=$LASTEXITCODE; Remove-Item -LiteralPath $f -ErrorAction SilentlyContinue; exit $rc } catch { Write-Host ('Launcher start error / erreur au demarrage du launcher: '+$_.Exception.Message) -ForegroundColor Red; exit 2 }"
 set "RC=!ERRORLEVEL!"
 if "!RC!"=="0" exit /b 0
 if "!RC!"=="10" exit /b 10
 if "!RC!"=="20" exit /b 0
 echo.
-echo Le launcher s'est arrete avec le code !RC!. Envoie une capture d'ecran de cette fenetre.
+echo The launcher stopped with code !RC!. Send a screenshot of this window. / Le launcher s'est arrete, code !RC! : envoie une capture de cette fenetre.
 pause
 exit /b !RC!
 )
@@ -34,11 +34,16 @@ exit /b !RC!
 # 3. The file the user started (Desktop, Downloads...) is kept identical to the repository's copy.
 # 4. After a change (and after the first clone), the window closes and the repository's copy of this file starts in a
 #    new window (WSL_RELAUNCHED stops a second restart).
-# 5. kit\ws_setup.ps1 of the repository does the rest (install, play, diag, unlock, optimize).
+# 5. kit\ws_setup.ps1 of the repository does the rest (install, play, diag, unlock, optimize, dlc).
 # Exit codes for the .bat: 0 done, 10 a failure already reported (it paused), 20 restarted in a new window.
 # Test-only environment: WSL_NO_RELAUNCH=1 (carry on in the same window after an update), WSL_REPO_URL (another remote),
-# WSL_CLONE_DIR (another clone folder; never fake LOCALAPPDATA instead, see memory.md).
+# WSL_CLONE_DIR (another clone folder; never fake LOCALAPPDATA instead).
+# Messages: English, or French when %LOCALAPPDATA%\WindowSmash-setup\lang.txt says fr (the kit's menu 7 writes it).
 param([string]$Self = '', [string]$KitDir = '', [string]$Mode = '')
+
+$Lang = 'en'
+try { if ((Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'WindowSmash-setup\lang.txt') -Raw -ErrorAction Stop).Trim() -eq 'fr') { $Lang = 'fr' } } catch {}
+function L([string]$en, [string]$fr) { if ($Lang -eq 'fr') { return $fr } return $en }
 
 $ErrorActionPreference = 'Stop'
 $LauncherUrl = if ($env:WSL_REPO_URL) { $env:WSL_REPO_URL } else { 'https://github.com/Nilsix/WindowSmashLauncher.git' }
@@ -55,9 +60,9 @@ try {       # boot files left behind by windows closed with their X button
 
 function Stop-Boot([string]$msg) {
     Write-Host ''
-    Write-Host "  ÉCHEC du launcher : $msg" -ForegroundColor Red
-    Write-Host '  Vérifie ta connexion internet puis relance. Si ça continue, envoie une capture de cette fenêtre.' -ForegroundColor Yellow
-    Read-Host 'Appuie sur Entrée pour fermer'
+    Write-Host "  $(L 'Launcher FAILED' 'ÉCHEC du launcher') : $msg" -ForegroundColor Red
+    Write-Host (L '  Check your internet connection, then start again. If it goes on, send a screenshot of this window.' '  Vérifie ta connexion internet puis relance. Si ça continue, envoie une capture de cette fenêtre.') -ForegroundColor Yellow
+    Read-Host (L 'Press Enter to close' 'Appuie sur Entrée pour fermer')
     exit 10
 }
 
@@ -73,8 +78,8 @@ function Find-Git {
 function Ensure-Git {
     $git = Find-Git
     if ($git) { return $git }
-    Write-Host '  Git n''est pas installé : je l''installe (il sert à télécharger et mettre à jour WindowSmash).' -ForegroundColor Yellow
-    Write-Host '  Une fenêtre administrateur peut s''ouvrir : accepte-la.'
+    Write-Host (L '  Git is not installed: installing it (it downloads and updates WindowSmash).' '  Git n''est pas installé : je l''installe (il sert à télécharger et mettre à jour WindowSmash).') -ForegroundColor Yellow
+    Write-Host (L '  An administrator window may open: accept it.' '  Une fenêtre administrateur peut s''ouvrir : accepte-la.')
     $wg = Get-Command winget -ErrorAction SilentlyContinue
     if ($wg) {
         $ErrorActionPreference = 'Continue'
@@ -87,7 +92,7 @@ function Ensure-Git {
     New-Item -ItemType Directory -Force $dir | Out-Null
     $inst = Join-Path $dir 'Git-2.56.0.2-64-bit.exe'
     if (-not (Test-Path -LiteralPath $inst) -or (Get-FileHash -LiteralPath $inst -Algorithm SHA256).Hash.ToLower() -ne $GIT_SHA) {
-        Write-Host '  Téléchargement de Git 2.56.0 (65 Mo)...'
+        Write-Host (L '  Downloading Git 2.56.0 (65 MB)...' '  Téléchargement de Git 2.56.0 (65 Mo)...')
         $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
         if (Test-Path -LiteralPath $curl) {
             $ErrorActionPreference = 'Continue'; & $curl -L --fail --retry 3 -o "$inst.part" $GIT_URL; $ErrorActionPreference = 'Stop'
@@ -96,17 +101,17 @@ function Ensure-Git {
             $ProgressPreference = 'SilentlyContinue'
             try { Invoke-WebRequest -Uri $GIT_URL -OutFile "$inst.part" -UseBasicParsing } catch {}
         }
-        if (-not (Test-Path -LiteralPath "$inst.part")) { Stop-Boot 'téléchargement de Git impossible' }
-        if ((Get-FileHash -LiteralPath "$inst.part" -Algorithm SHA256).Hash.ToLower() -ne $GIT_SHA) { Remove-Item -LiteralPath "$inst.part" -Force; Stop-Boot 'installateur de Git téléchargé abîmé (empreinte SHA-256 différente)' }
+        if (-not (Test-Path -LiteralPath "$inst.part")) { Stop-Boot (L 'Git download failed' 'téléchargement de Git impossible') }
+        if ((Get-FileHash -LiteralPath "$inst.part" -Algorithm SHA256).Hash.ToLower() -ne $GIT_SHA) { Remove-Item -LiteralPath "$inst.part" -Force; Stop-Boot (L 'downloaded Git installer damaged (different SHA-256)' 'installateur de Git téléchargé abîmé (empreinte SHA-256 différente)') }
         Move-Item -LiteralPath "$inst.part" -Destination $inst -Force
     }
     $sig = Get-AuthenticodeSignature -LiteralPath $inst
-    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Johannes Schindelin') { Stop-Boot "signature de l'installateur de Git invalide ($($sig.Status))" }
-    Write-Host '  Installation de Git...'
+    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Johannes Schindelin') { Stop-Boot (L "the Git installer's signature is not valid ($($sig.Status))" "signature de l'installateur de Git invalide ($($sig.Status))") }
+    Write-Host (L '  Installing Git...' '  Installation de Git...')
     try { $p = Start-Process -FilePath $inst -ArgumentList '/VERYSILENT /NORESTART /NOCANCEL /SP- /SUPPRESSMSGBOXES' -Wait -PassThru }
-    catch { Stop-Boot "installation de Git annulée ou impossible ($($_.Exception.Message))" }
+    catch { Stop-Boot (L "Git install cancelled or impossible ($($_.Exception.Message))" "installation de Git annulée ou impossible ($($_.Exception.Message))") }
     $git = Find-Git
-    if (-not $git) { Stop-Boot "Git introuvable après son installation (code $($p.ExitCode)) : installe-le depuis git-scm.com puis relance" }
+    if (-not $git) { Stop-Boot (L "Git not found after its install (code $($p.ExitCode)): install it from git-scm.com, then start again" "Git introuvable après son installation (code $($p.ExitCode)) : installe-le depuis git-scm.com puis relance") }
     return $git
 }
 
@@ -121,25 +126,25 @@ Write-Host 'WindowSmash Launcher' -ForegroundColor Cyan
 $Script:Git = Ensure-Git
 $updated = $false
 if (-not (Test-Path -LiteralPath (Join-Path $Clone '.git')) -or -not (Test-Path -LiteralPath (Join-Path $Clone 'kit\ws_setup.ps1'))) {
-    Write-Host '  Premier lancement : téléchargement du launcher...'
+    Write-Host (L '  First start: downloading the launcher...' '  Premier lancement : téléchargement du launcher...')
     if (Test-Path -LiteralPath $Clone) {       # an attempt that stopped half way, or a damaged copy: emptied (the folder itself may be in use)
-        try { Get-ChildItem -LiteralPath $Clone -Force | Remove-Item -Recurse -Force } catch { Stop-Boot "impossible de vider $Clone ($($_.Exception.Message))" }
+        try { Get-ChildItem -LiteralPath $Clone -Force | Remove-Item -Recurse -Force } catch { Stop-Boot (L "cannot empty $Clone ($($_.Exception.Message))" "impossible de vider $Clone ($($_.Exception.Message))") }
     }
     $ErrorActionPreference = 'Continue'; & $Script:Git clone --quiet $LauncherUrl $Clone | Out-Host; $code = $LASTEXITCODE; $ErrorActionPreference = 'Stop'
-    if ($code -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $Clone 'kit\ws_setup.ps1'))) { Stop-Boot "git clone de $LauncherUrl a échoué (code $code)" }
+    if ($code -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $Clone 'kit\ws_setup.ps1'))) { Stop-Boot (L "git clone of $LauncherUrl failed (code $code)" "git clone de $LauncherUrl a échoué (code $code)") }
     $updated = $true
 } else {
     $before = (Run-Git @('-C', $Clone, 'rev-parse', 'HEAD')) | Select-Object -First 1
     $null = Run-Git @('-C', $Clone, 'fetch', '--quiet', 'origin')
     if ($Script:GitCode -ne 0) {
-        Write-Host '  Pas de connexion au dépôt du launcher : je continue avec la version déjà là.' -ForegroundColor Yellow
+        Write-Host (L '  No connection to the launcher repository: carrying on with the version already here.' '  Pas de connexion au dépôt du launcher : je continue avec la version déjà là.') -ForegroundColor Yellow
     } else {
         $after = (Run-Git @('-C', $Clone, 'rev-parse', '@{u}')) | Select-Object -First 1
         if ($Script:GitCode -eq 0 -and $after -and $after -ne $before) {
             $null = Run-Git @('-C', $Clone, 'reset', '--hard', '--quiet', $after)
-            if ($Script:GitCode -ne 0) { Stop-Boot 'mise à jour du launcher impossible (git reset)' }
+            if ($Script:GitCode -ne 0) { Stop-Boot (L 'launcher update impossible (git reset)' 'mise à jour du launcher impossible (git reset)') }
             $b7 = if ($before) { $before.Substring(0, 7) } else { '?' }
-            Write-Host "  Launcher mis à jour ($b7 -> $($after.Substring(0, 7)))." -ForegroundColor Green
+            Write-Host "  $(L 'Launcher updated' 'Launcher mis à jour') ($b7 -> $($after.Substring(0, 7)))." -ForegroundColor Green
             $updated = $true
         }
     }
@@ -153,7 +158,7 @@ try {
     $rt = [IO.File]::ReadAllText($repoBat)
     $repoOk = -not [regex]::IsMatch($rt, '(?<!\r)\n') -and $rt.Contains("`r`n#@@BEGIN boot.ps1`r`n") -and $rt.Contains("`r`n#@@END boot.ps1")
 } catch {}
-if (-not $repoOk) { Write-Host '  (la copie du launcher dans le dépôt est abîmée : je garde celle-ci et je continue)' -ForegroundColor Yellow }
+if (-not $repoOk) { Write-Host (L '  (the launcher copy in the repository is damaged: keeping this one and carrying on)' '  (la copie du launcher dans le dépôt est abîmée : je garde celle-ci et je continue)') -ForegroundColor Yellow }
 
 # The file the user started (Desktop, Downloads...) is refreshed with the repository's copy. Safe while that file is
 # running: cmd.exe has already read the whole block that started this script and does not read the file again.
@@ -162,13 +167,13 @@ if ($repoOk -and $Self -and (Test-Path -LiteralPath $Self)) {
         $own = (Resolve-Path -LiteralPath $Self).Path
         if ($own -ne (Resolve-Path -LiteralPath $repoBat).Path -and (Get-FileHash -LiteralPath $own).Hash -ne (Get-FileHash -LiteralPath $repoBat).Hash) {
             Copy-Item -LiteralPath $repoBat -Destination $own -Force
-            Write-Host "  $(Split-Path $own -Leaf) mis à jour."
+            Write-Host "  $(Split-Path $own -Leaf) $(L 'updated' 'mis à jour')."
         }
-    } catch { Write-Host "  (copie du launcher non mise à jour : $($_.Exception.Message))" -ForegroundColor Yellow }
+    } catch { Write-Host "  ($(L 'launcher copy not updated' 'copie du launcher non mise à jour') : $($_.Exception.Message))" -ForegroundColor Yellow }
 }
 
 if ($repoOk -and $updated -and -not $env:WSL_RELAUNCHED -and -not $env:WSL_NO_RELAUNCH) {
-    Write-Host '  Redémarrage dans la nouvelle version...'
+    Write-Host (L '  Restarting in the new version...' '  Redémarrage dans la nouvelle version...')
     $env:WSL_RELAUNCHED = '1'
     $env:WSL_KITDIR = $KitDir
     Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList @('/c', ('""' + $repoBat + '" ' + $Mode + '"')) -WorkingDirectory $Clone

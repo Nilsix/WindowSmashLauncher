@@ -18,7 +18,7 @@
   unlock    [--dry-run]                     every fighter unlocked in the save (tools/unlock_all.py)
   shaders   [--jobs N]                      the game's shaders compiled ahead of time (tools/shader_aot.py)
 
-Lines for ws_setup.ps1: "@@JSON {...}", "@@WARN <code> <text>", "@@ERROR <code> <text>" (then exit 2; exit 3 is
+Messages are English, or French with WS_LANG=fr (L(en, fr)). Lines for ws_setup.ps1: "@@JSON {...}", "@@WARN <code> <text>", "@@ERROR <code> <text>" (then exit 2; exit 3 is
 "the compiler ran out of memory": the caller retries with fewer jobs). Key values are never printed.
 
 Since commit ec8a8b5 WindowSmash plays game version 13.0.5 only, built in its own folder (dump/, build/, save/) by
@@ -49,6 +49,11 @@ FONTS_NEEDED = ["nintendo_udsg-r_std_003.bfttf", "nintendo_udsg-r_org_zh-cn_003.
 CHUNK = 64 << 20
 OOM_MARKS = ("out of memory", "allocation failed", "memoryerror", "out of heap space", "bad_alloc")
 DISK_MARKS = ("no space left on device", "not enough space on the disk", "espace insuffisant sur le disque")
+
+
+def L(en, fr):
+    """A message in the player's language: ws_setup.ps1 sets WS_LANG (English unless the player chose French)."""
+    return fr if os.environ.get("WS_LANG") == "fr" else en
 
 
 class Problem(Exception):
@@ -84,13 +89,13 @@ def out(kind, payload):
 def tools(repo):
     t = os.path.join(repo, "tools")
     if not os.path.isfile(os.path.join(t, "nca.py")):
-        raise Problem("E10", f"{repo}: pas de tools\\nca.py (ce n'est pas le dossier WindowSmash)")
+        raise Problem("E10", L(f"{repo}: no tools\\nca.py (not the WindowSmash folder)", f"{repo}: pas de tools\\nca.py (ce n'est pas le dossier WindowSmash)"))
     if t not in sys.path:
         sys.path.insert(0, t)
     try:
         import nca  # noqa: F401
     except ImportError as e:
-        raise Problem("E31", f"module manquant dans l'environnement Python: {e}")
+        raise Problem("E31", L(f"module missing from the Python environment: {e}", f"module manquant dans l'environnement Python: {e}"))
 
 
 # ---- containers ---------------------------------------------------------------------------
@@ -98,7 +103,7 @@ def hfs0(f, base):
     f.seek(base)
     magic, count, strings_size, _ = struct.unpack("<4sIII", f.read(16))
     if magic != b"HFS0":
-        raise Problem("E42", f"partition HFS0 attendue a {base:#x}: XCI abime ou incomplet")
+        raise Problem("E42", L(f"HFS0 partition expected at {base:#x}: XCI damaged or incomplete", f"partition HFS0 attendue a {base:#x}: XCI abime ou incomplet"))
     entries = [struct.unpack_from("<QQI", f.read(0x40)) for _ in range(count)]
     strings = f.read(strings_size)
     data = base + 16 + 0x40 * count + strings_size
@@ -166,18 +171,24 @@ def check_nca_keys(info, prod, title_keys, personal):
     g = info["key_gen"]
     if int(info["rights"], 16):
         if f"titlekek_{g:02x}" not in prod:
-            raise Problem("E41", f"prod.keys trop ancien: il manque titlekek_{g:02x} (generation {g}). "
-                                 "Redumpe tes cles (Lockpick_RCM) depuis ta console a jour.")
+            raise Problem("E41", L(f"prod.keys too old: titlekek_{g:02x} is missing (generation {g}). Dump your keys again "
+                                   "(Lockpick_RCM) from your up-to-date console.",
+                                   f"prod.keys trop ancien: il manque titlekek_{g:02x} (generation {g}). "
+                                   "Redumpe tes cles (Lockpick_RCM) depuis ta console a jour."))
         if info["rights"] not in title_keys:
             if personal:
-                raise Problem("E44", "le ticket du paquet est personnalise (lie a une console): redumpe le jeu avec "
-                                     "nxdumptool option 'remove console specific data', ou fournis un title.keys.")
-            raise Problem("E44", "pas de ticket dans le paquet pour sa cle de titre: fournis un title.keys ou un dump "
-                                 "avec ticket.")
+                raise Problem("E44", L("the package's ticket is personalized (tied to a console): dump the game again with "
+                                       "nxdumptool's 'remove console specific data' option, or give a title.keys.",
+                                       "le ticket du paquet est personnalise (lie a une console): redumpe le jeu avec "
+                                       "nxdumptool option 'remove console specific data', ou fournis un title.keys."))
+            raise Problem("E44", L("no ticket in the package for its title key: give a title.keys or a dump with its ticket.",
+                                   "pas de ticket dans le paquet pour sa cle de titre: fournis un title.keys ou un dump "
+                                   "avec ticket."))
     else:
         name = ("application", "ocean", "system")[info["kaek"] if info["kaek"] < 3 else 0]
         if f"key_area_key_{name}_{g:02x}" not in prod:
-            raise Problem("E41", f"prod.keys trop ancien: il manque key_area_key_{name}_{g:02x} (generation {g}).")
+            raise Problem("E41", L(f"prod.keys too old: key_area_key_{name}_{g:02x} is missing (generation {g}).",
+                                   f"prod.keys trop ancien: il manque key_area_key_{name}_{g:02x} (generation {g})."))
 
 
 def open_ncas(path, keys, partition=None, with_meta=False):
@@ -188,7 +199,7 @@ def open_ncas(path, keys, partition=None, with_meta=False):
     kind, parts = container(path)
     files = parts.get(partition or ("secure" if kind == "xci" else ""))
     if files is None:
-        raise Problem("E42", f"{os.path.basename(path)}: pas de partition {partition or 'secure'}")
+        raise Problem("E42", L(f"{os.path.basename(path)}: no {partition or 'secure'} partition", f"{os.path.basename(path)}: pas de partition {partition or 'secure'}"))
     tks, personal = ({}, 0)
     if kind == "nsp":
         tks, personal = tickets(path, files)
@@ -199,7 +210,7 @@ def open_ncas(path, keys, partition=None, with_meta=False):
             continue
         info = header_info(path, off, prod)
         if info is None:
-            raise Problem("E41", "l'en-tete d'un NCA ne se dechiffre pas: header_key fausse dans prod.keys?")
+            raise Problem("E41", L("an NCA's header does not decrypt: wrong header_key in prod.keys?", "l'en-tete d'un NCA ne se dechiffre pas: header_key fausse dans prod.keys?"))
         check_nca_keys(info, prod, {k.lower(): v for k, v in title_keys.items()}, personal)
         tk = {k: v for k, v in tks.items()}
         result.append((name, Nca(path, keys, off, tk or None), info))
@@ -251,13 +262,13 @@ def cmd_probe(a):
         pass
     out("JSON", json.dumps(info))
     if sys.version_info < (3, 14) or not info["zstd"]:
-        raise Problem("E30", f"Python {info['python']} sans compression.zstd: il faut Python 3.14")
+        raise Problem("E30", L(f"Python {info['python']} without compression.zstd: Python 3.14 is needed", f"Python {info['python']} sans compression.zstd: il faut Python 3.14"))
 
 
 def cmd_keys(a):
     path = os.path.join(a.keys, "prod.keys")
     if not os.path.isfile(path):
-        raise Problem("E41", f"prod.keys introuvable ({path})")
+        raise Problem("E41", L(f"prod.keys not found ({path})", f"prod.keys introuvable ({path})"))
     names, bad = {}, 0
     with open(path, encoding="utf-8", errors="ignore") as f:
         for line in f:
@@ -269,18 +280,18 @@ def cmd_keys(a):
             except ValueError:
                 bad += 1
     if not names:
-        raise Problem("E41", "prod.keys vide ou illisible")
+        raise Problem("E41", L("prod.keys empty or unreadable", "prod.keys vide ou illisible"))
     hexchars = set("0123456789abcdef")
     if all(len(k) == 32 and set(k) <= hexchars for k in names):
-        raise Problem("E41", "ce fichier est un title.keys, pas un prod.keys")
+        raise Problem("E41", L("this file is a title.keys, not a prod.keys", "ce fichier est un title.keys, pas un prod.keys"))
     kak = sorted(int(k[-2:], 16) for k in names if k.startswith("key_area_key_application_") and len(k) == 27)
     tkek = sorted(int(k[-2:], 16) for k in names if k.startswith("titlekek_") and len(k) == 11)
     out("JSON", json.dumps({"count": len(names), "unreadable_lines": bad, "header_key": names.get("header_key") == 32,
                             "kak_application": kak, "titlekek": tkek}))
     if names.get("header_key") != 32:
-        raise Problem("E41", "header_key manquante ou invalide dans prod.keys")
+        raise Problem("E41", L("header_key missing or invalid in prod.keys", "header_key manquante ou invalide dans prod.keys"))
     if not kak or not tkek:
-        raise Problem("E41", "prod.keys incomplet (key_area_key_application_xx / titlekek_xx manquantes)")
+        raise Problem("E41", L("prod.keys incomplete (key_area_key_application_xx / titlekek_xx missing)", "prod.keys incomplet (key_area_key_application_xx / titlekek_xx manquantes)"))
 
 
 def cmd_identify(a):
@@ -288,7 +299,7 @@ def cmd_identify(a):
     kind, ncas = open_ncas(a.file, a.keys, with_meta=True)
     programs = [(nca.size, n, nca, i) for n, nca, i in ncas if i["type"] == 0]
     if not programs:
-        raise Problem("E42" if a.role == "base" else "E43", f"{os.path.basename(a.file)}: pas de NCA programme")
+        raise Problem("E42" if a.role == "base" else "E43", L(f"{os.path.basename(a.file)}: no program NCA", f"{os.path.basename(a.file)}: pas de NCA programme"))
     _size, name, prog, pinfo = max(programs, key=lambda p: p[0])
     romfs = prog.section(0)
     patch = romfs is not None and romfs.enc_type == 4
@@ -304,19 +315,21 @@ def cmd_identify(a):
            "xci_update_partition": has_fonts, "program_size": prog.size, "titlekey": bool(int(pinfo["rights"], 16))}
     out("JSON", json.dumps(res))
     if pinfo["title"] not in (SSBU_BASE, SSBU_UPDATE):
-        raise Problem("E42" if a.role == "base" else "E43", f"ce n'est pas Super Smash Bros. Ultimate (titre {pinfo['title']:016X})")
+        raise Problem("E42" if a.role == "base" else "E43", L(f"this is not Super Smash Bros. Ultimate (title {pinfo['title']:016X})", f"ce n'est pas Super Smash Bros. Ultimate (titre {pinfo['title']:016X})"))
     if a.role == "base":
         if patch or tid == SSBU_UPDATE:
-            raise Problem("E42", "ce fichier est une MISE A JOUR, pas le jeu de base (il faut le .xci/.nsp du jeu 1.0.0)")
+            raise Problem("E42", L("this file is an UPDATE, not the base game (the 1.0.0 game's .xci/.nsp is needed)", "ce fichier est une MISE A JOUR, pas le jeu de base (il faut le .xci/.nsp du jeu 1.0.0)"))
         if disp and disp != "1.0.0":
-            out("WARN", f"W42 jeu de base en version {disp} (1.0.0 attendue): l'update s'appliquera plus lentement, "
-                        "et peut echouer")
+            out("WARN", L(f"W42 base game in version {disp} (1.0.0 expected): the update will apply more slowly, and may fail",
+                          f"W42 jeu de base en version {disp} (1.0.0 attendue): l'update s'appliquera plus lentement, "
+                          "et peut echouer"))
     else:
         if not patch or (tid is not None and tid != SSBU_UPDATE):
-            raise Problem("E43", "ce fichier n'est pas une mise a jour de Smash Ultimate (il faut l'update .nsp)")
+            raise Problem("E43", L("this file is not a Smash Ultimate update (the update .nsp is needed)", "ce fichier n'est pas une mise a jour de Smash Ultimate (il faut l'update .nsp)"))
         if a.expect and disp != a.expect:
-            out("WARN", f"W43 update en version {disp}, {a.expect} attendue: le netplay demande la meme version que "
-                        "l'hote")
+            out("WARN", L(f"W43 update in version {disp}, {a.expect} expected: netplay needs the same version as the host",
+                          f"W43 update en version {disp}, {a.expect} attendue: le netplay demande la meme version que "
+                          "l'hote"))
 
 
 def write_plain(path, off, size, nca, prod, out_path):
@@ -341,14 +354,14 @@ def write_plain(path, off, size, nca, prod, out_path):
                 pct = 100.0 * done / size
                 if pct - shown >= 5:     # a line every 5 %: the caller shows lines as they come
                     shown = pct
-                    print(f"  {pct:5.1f}%  {done / 2 ** 20 / max(time.time() - t0, 0.01):.0f} Mo/s", flush=True)
+                    print(f"  {pct:5.1f}%  {done / 2 ** 20 / max(time.time() - t0, 0.01):.0f} {L('MB/s', 'Mo/s')}", flush=True)
             pos = sec.end
         src.seek(off + pos)
         o.write(src.read(size - pos))
         if o.tell() != size:
-            raise Problem("E50", f"ecrit {o.tell()} octets au lieu de {size}")
+            raise Problem("E50", L(f"wrote {o.tell()} bytes instead of {size}", f"ecrit {o.tell()} octets au lieu de {size}"))
     os.replace(out_path + ".part", out_path)
-    print(f"  ecrit en {time.time() - t0:.0f} s", flush=True)
+    print(L(f"  written in {time.time() - t0:.0f} s", f"  ecrit en {time.time() - t0:.0f} s"), flush=True)
 
 
 def cmd_plain_nca(a):
@@ -360,11 +373,11 @@ def cmd_plain_nca(a):
     kind, ncas = open_ncas(a.base, a.keys)
     programs = [(nca.size, n, nca, i) for n, nca, i in ncas if i["type"] == 0]
     if not programs:
-        raise Problem("E42", "pas de NCA programme dans le jeu de base")
+        raise Problem("E42", L("no program NCA in the base game", "pas de NCA programme dans le jeu de base"))
     size, name, nca, info = max(programs, key=lambda p: p[0])
     off, entry_size = files[name]
     if nca.size != entry_size:
-        raise Problem("E42", f"{name}: taille {nca.size} dans l'en-tete, {entry_size} dans le paquet (dump abime?)")
+        raise Problem("E42", L(f"{name}: size {nca.size} in its header, {entry_size} in the package (damaged dump?)", f"{name}: taille {nca.size} dans l'en-tete, {entry_size} dans le paquet (dump abime?)"))
     if int(info["rights"], 16):   # the plain NCA keeps its rights id: WindowSmash opens it with the title key
         enc = (tickets(a.base, files)[0] if kind == "nsp" else {}).get(info["rights"])
         if enc:
@@ -376,19 +389,19 @@ def cmd_plain_nca(a):
     if os.path.exists(a.out) and os.path.getsize(a.out) == size:
         try:
             if Nca(a.out, a.keys).plaintext:
-                print(f"  {a.out}: deja la (dechiffre), garde", flush=True)
+                print(L(f"  {a.out}: already there (decrypted), kept", f"  {a.out}: deja la (dechiffre), garde"), flush=True)
                 return
         except SystemExit:
             pass
-    print(f"  NCA programme {name}: {size / 2 ** 30:.2f} Go -> {a.out}", flush=True)
+    print(L(f"  program NCA {name}: {size / 2 ** 30:.2f} GB -> {a.out}", f"  NCA programme {name}: {size / 2 ** 30:.2f} Go -> {a.out}"), flush=True)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     free = __import__("shutil").disk_usage(os.path.dirname(os.path.abspath(a.out))).free
     if free < size + (1 << 30):
-        raise Problem("E22", f"pas assez de place: {size / 2 ** 30:.1f} Go a ecrire, {free / 2 ** 30:.1f} Go libres")
+        raise Problem("E22", L(f"not enough space: {size / 2 ** 30:.1f} GB to write, {free / 2 ** 30:.1f} GB free", f"pas assez de place: {size / 2 ** 30:.1f} Go a ecrire, {free / 2 ** 30:.1f} Go libres"))
     write_plain(a.base, off, size, nca, prod, a.out)
     check = Nca(a.out, a.keys)
     if not check.plaintext or check.title_id != info["title"]:
-        raise Problem("E50", "le NCA ecrit ne se relit pas comme un NCA dechiffre")
+        raise Problem("E50", L("the NCA written does not read back as a decrypted NCA", "le NCA ecrit ne se relit pas comme un NCA dechiffre"))
 
 
 def nca_files(folder):
@@ -406,11 +419,11 @@ def cmd_fonts(a):
     found = 0
     if os.path.isdir(a.source):
         cands = [(p, 0) for p in nca_files(a.source)]
-        print(f"  {len(cands)} fichiers NCA dans {a.source}", flush=True)
+        print(L(f"  {len(cands)} NCA files in {a.source}", f"  {len(cands)} fichiers NCA dans {a.source}"), flush=True)
     else:
         kind, parts = container(a.source)
         if kind != "xci" or not parts.get("update"):
-            raise Problem("E45", "ce fichier n'a pas de partition 'update' (firmware): donne le dossier du firmware")
+            raise Problem("E45", L("this file has no 'update' partition (firmware): give the firmware folder", "ce fichier n'a pas de partition 'update' (firmware): donne le dossier du firmware"))
         cands = [(a.source, off) for n, (off, _s) in sorted(parts["update"].items()) if n.endswith(".nca")]
     for path, off in cands:
         try:
@@ -429,11 +442,11 @@ def cmd_fonts(a):
                     print(f"  {os.path.basename(p)}", flush=True)
                     found += 1
         except Exception as e:   # noqa: BLE001
-            out("WARN", f"W45 archive de polices illisible ({e})")
+            out("WARN", L(f"W45 font archive unreadable ({e})", f"W45 archive de polices illisible ({e})"))
     missing = [f for f in FONTS_NEEDED if not os.path.exists(os.path.join(a.outdir, f))]
     out("JSON", json.dumps({"written": found, "missing": missing}))
     if missing:
-        raise Problem("E45", "polices manquantes: " + ", ".join(missing))
+        raise Problem("E45", L("fonts missing: ", "polices manquantes: ") + ", ".join(missing))
 
 
 STAGE = os.path.join("dump", "game_files")     # the game folder build_game.py is given (made by stage_game_files)
@@ -453,12 +466,12 @@ def migrate_version_folders(repo):
         save, root_save = os.path.join(repo, tree, "save"), os.path.join(repo, "save")
         if os.path.isdir(save) and not os.path.exists(root_save):
             shutil.copytree(save, root_save)
-            print(f"  {tree}\\save -> save (ta sauvegarde, reprise par la 13.0.5)", flush=True)
+            print(f"  {tree}\\save -> save " + L("(your save, taken over by 13.0.5)", "(ta sauvegarde, reprise par la 13.0.5)"), flush=True)
         cache, root_cache = os.path.join(repo, tree, "dump", "shadercache"), os.path.join(repo, "dump", "shadercache")
         if os.path.isdir(cache) and not os.path.exists(root_cache):
             os.makedirs(os.path.dirname(root_cache), exist_ok=True)
             shutil.move(cache, root_cache)
-            print(f"  {tree}\\dump\\shadercache -> dump\\shadercache (les shaders deja prepares)", flush=True)
+            print(f"  {tree}\\dump\\shadercache -> dump\\shadercache " + L("(the shaders prepared already)", "(les shaders deja prepares)"), flush=True)
 
 
 def drop_base_only_cfg(repo):
@@ -471,7 +484,7 @@ def drop_base_only_cfg(repo):
         first = f.readline().strip()
     if first != "layered" and os.path.normcase(os.path.abspath(first)) == os.path.normcase(os.path.join(repo, PLAIN_BASE)):
         os.remove(cfg)
-        print("  dump\\modules\\romfs.cfg du jeu de base seul (kit 2.x) retire", flush=True)
+        print(L("  dump\\modules\\romfs.cfg of the base game alone (kit 2.x) removed", "  dump\\modules\\romfs.cfg du jeu de base seul (kit 2.x) retire"), flush=True)
 
 
 def is_junction(path):
@@ -487,7 +500,7 @@ def make_junction(link, target):
         r = subprocess.run(["cmd", "/c", "mklink", "/J", os.path.abspath(link), os.path.abspath(target)],
                            capture_output=True, text=True)
         if r.returncode or not os.path.isdir(link):
-            raise Problem("E53", f"lien vers {target} impossible: {(r.stdout + r.stderr).strip()}")
+            raise Problem("E53", L(f"link to {target} impossible: ", f"lien vers {target} impossible: ") + (r.stdout + r.stderr).strip())
 
 
 def read_copies(stage):
@@ -525,7 +538,7 @@ def remove_entry(stage, name, copies):
     elif os.path.isfile(p) and os.stat(p).st_nlink > 1:
         os.remove(p)
     else:
-        raise Problem("E53", f"{p}: inattendu dans {os.path.dirname(p)} (rien n'a ete efface)")
+        raise Problem("E53", L(f"{p}: unexpected in {os.path.dirname(p)} (nothing was deleted)", f"{p}: inattendu dans {os.path.dirname(p)} (rien n'a ete efface)"))
 
 
 def same_stamp(a, b):
@@ -541,12 +554,12 @@ def stage_base(repo, stage):
     if os.path.isfile(dst):
         return
     if not os.path.isfile(old):
-        raise Problem("E50", f"{dst} manque: la copie dechiffree du jeu de base n'est pas faite")
+        raise Problem("E50", L(f"{dst} is missing: the decrypted copy of the base game is not made", f"{dst} manque: la copie dechiffree du jeu de base n'est pas faite"))
     try:
         os.link(old, dst)
     except OSError:
         os.replace(old, dst)
-        print("  jeu de base dechiffre deplace dans dump\\game_files (ce disque ne fait pas de liens)", flush=True)
+        print(L("  decrypted base game moved into dump\\game_files (this disk has no links)", "  jeu de base dechiffre deplace dans dump\\game_files (ce disque ne fait pas de liens)"), flush=True)
 
 
 def place_file(src, stage, folder, copies):
@@ -572,8 +585,9 @@ def place_file(src, stage, folder, copies):
         return folder
     except Problem:
         pass
-    print(f"  copie de {name} dans dump\\game_files ({os.path.getsize(src) / 2**30:.1f} Go: ce disque ne fait pas de "
-          "liens)", flush=True)
+    gb = os.path.getsize(src) / 2**30
+    print(L(f"  copying {name} into dump\\game_files ({gb:.1f} GB: this disk has no links)",
+            f"  copie de {name} dans dump\\game_files ({gb:.1f} Go: ce disque ne fait pas de liens)"), flush=True)
     copies.add(name)
     shutil.copy2(src, dst + ".part")
     os.replace(dst + ".part", dst)
@@ -599,7 +613,7 @@ def place_dir(src, stage, name, copies):
             if f.lower().endswith((".nsp", ".nca")):
                 shutil.copy2(os.path.join(dp, f), os.path.join(dst, f))
                 n += 1
-    print(f"  {n} fichiers de DLC copies dans dump\\game_files\\{name} (ce disque ne fait pas de liens)", flush=True)
+    print(L(f"  {n} DLC files copied into dump\\game_files\\{name} (this disk has no links)", f"  {n} fichiers de DLC copies dans dump\\game_files\\{name} (ce disque ne fait pas de liens)"), flush=True)
     return name
 
 
@@ -665,7 +679,7 @@ def seed_from_old_tree(repo):
                 except OSError:
                     pass
         if moved:
-            print(f"  {moved} modules repris de {tree}\\build (identiques en 13.0.5 : pas recompiles)", flush=True)
+            print(L(f"  {moved} modules taken from {tree}\\build (the same in 13.0.5: not compiled again)", f"  {moved} modules repris de {tree}\\build (identiques en 13.0.5 : pas recompiles)"), flush=True)
 
 
 def cmd_install(a):
@@ -713,13 +727,13 @@ def run_build_game(cmd):
     text = " ".join(seen["error"]).replace("ERROR: ", "", 1).strip() or f"build_game.py: code {p.returncode}"
     step = seen["step"]
     if seen["disk"]:
-        raise Problem("E22", "disque plein: libere de la place et relance")
+        raise Problem("E22", L("disk full: free some space and start again", "disque plein: libere de la place et relance"))
     if step == 9:
         if seen["oom"]:
-            raise Problem("E60", "le compilateur a manque de memoire", exit_code=3)
+            raise Problem("E60", L("the compiler ran out of memory", "le compilateur a manque de memoire"), exit_code=3)
         if seen["link"]:
-            raise Problem("E61", "l'edition de liens a echoue (voir le log)")
-    raise Problem(STEP_CODES.get(step, "E59"), f"etape {step}/9: {text}")
+            raise Problem("E61", L("the link failed (see the log)", "l'edition de liens a echoue (voir le log)"))
+    raise Problem(STEP_CODES.get(step, "E59"), L(f"step {step}/9: {text}", f"etape {step}/9: {text}"))
 
 
 def cmd_unlock(a):
@@ -729,7 +743,7 @@ def cmd_unlock(a):
     import unlock_all
     save = os.path.join(a.repo, unlock_all.SAVE)
     if not os.path.exists(save):
-        raise Problem("E80", "pas encore de sauvegarde: lance le jeu une fois jusqu'au menu, ferme-le, puis recommence")
+        raise Problem("E80", L("no save yet: start the game once up to the menu, close it, then try again", "pas encore de sauvegarde: lance le jeu une fois jusqu'au menu, ferme-le, puis recommence"))
     sys.argv = ["unlock_all.py"] + (["--dry-run"] if a.dry_run else [])
     try:
         unlock_all.main()
@@ -750,7 +764,7 @@ def cmd_shaders(a):
         sys.stdout.write(line)
     p.wait()
     if p.returncode:
-        raise Problem("E85", f"la precompilation des shaders s'est arretee (code {p.returncode})")
+        raise Problem("E85", L(f"shader precompilation stopped (code {p.returncode})", f"la precompilation des shaders s'est arretee (code {p.returncode})"))
 
 
 def cmd_status(a):
@@ -825,7 +839,7 @@ def main():
         raise
     except BaseException as e:   # noqa: BLE001 - anything else: the traceback goes to the report
         traceback.print_exc(file=sys.stdout)
-        out("ERROR", f"E59 erreur interne ({type(e).__name__}: {e})")
+        out("ERROR", "E59 " + L("internal error", "erreur interne") + f" ({type(e).__name__}: {e})")
         sys.stdout.flush()
         sys.exit(2)
 

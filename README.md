@@ -58,6 +58,7 @@ Depuis octobre 2026, WindowSmash ne marche qu'avec la mise à jour **13.0.5** du
 | 4) Débloquer tous les personnages | Après avoir lancé le jeu une fois puis l'avoir fermé. |
 | 5) Optimiser | Précompile les shaders (FPS stables) et met la latence d'affichage à 1. |
 | 6) Ajouter mes DLC | Ajoute au jeu les DLC que tu as achetés, dumpés de ta Switch (dossier de fichiers `.nsp`). En ligne, ayez les mêmes DLC. |
+| 7) Français / English | Le launcher est en anglais par défaut : **7** le passe en français (et **7** le remet en anglais). Le choix est gardé. |
 
 ## Jouer en ligne
 
@@ -81,7 +82,7 @@ Les manettes (Xbox, PlayStation, Switch Pro...) marchent directement.
 
 ## Si ça ne marche pas
 
-Le launcher s'arrête avec un code (E10 à E99) et une explication, et écrit **`WindowSmash-setup-rapport.txt`**
+Le launcher s'arrête avec un code (E10 à E99) et une explication, et écrit **`WindowSmash-setup-report.txt`**
 sur ton Bureau. Envoie ce fichier tel quel : il ne contient ni clés ni fichiers du jeu.
 
 ## Pour les développeurs
