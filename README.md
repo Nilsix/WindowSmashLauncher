@@ -85,9 +85,41 @@ Les manettes (Xbox, PlayStation, Switch Pro...) marchent directement.
 Le launcher s'arrête avec un code (E10 à E99) et une explication, et écrit **`WindowSmash-setup-report.txt`**
 sur ton Bureau. Envoie ce fichier tel quel : il ne contient ni clés ni fichiers du jeu.
 
+## OpenSmash Launcher (l'autre version, avec rollback)
+
+[OpenSmash](https://github.com/OpenSmash-Ultimate/ssbu-recomp) est une autre recompilation de Smash Ultimate (rendu
+Vulkan) avec un **rollback netcode** expérimental. Son launcher marche comme celui de WindowSmash :
+
+1. Ouvre **[OpenSmash Launcher.bat](https://github.com/Nilsix/WindowSmashLauncher/blob/main/OpenSmash%20Launcher.bat)**,
+   clique sur **« Download raw file »**, puis double-clique sur le fichier et choisis **1) Install**.
+2. Il installe OpenSmash à côté de WindowSmash (ou où tu veux, environ **30 Go**) dans **la version choisie pour tout
+   le groupe**, pas forcément la dernière : en ligne, tout le monde doit avoir la même. Il reprend les fichiers du jeu
+   déjà donnés au launcher WindowSmash (jeu de base 1.0.0, mise à jour **13.0.5**, `prod.keys`). Pas besoin de Visual
+   Studio. Compte 1 à 3 h la première fois.
+3. À la fin : raccourcis **Smash Ultimate (OpenSmash)** (lance le jeu en vérifiant la version) et **OpenSmash
+   Launcher** (le menu).
+
+Le **rollback est toujours activé** quand le jeu est lancé par le launcher. Il sert dans les rooms **Local Wireless à 2
+joueurs** qui l'ont tous les deux ; les rooms à plus de 2 joueurs et les combats locaux se jouent comme d'habitude.
+OpenSmash a son propre lobby : les joueurs WindowSmash et OpenSmash ne se voient pas, choisissez le même entre amis.
+
+| Choix | Ce qu'il fait |
+| :--- | :--- |
+| 1) Installer / mettre à jour | Installe OpenSmash, ou le met à la version du groupe et recompile. |
+| 2) Lancer le jeu | Lance le jeu, rollback activé. |
+| 3) Diagnostic | Crée `OpenSmash-setup-report.txt` sur le Bureau sans rien installer. |
+| 4) Ajouter mes DLC | Les DLC que tu as achetés, dumpés de ta Switch (dossier de fichiers `.nsp`, noms d'origine) : même dossier que l'option 6 du launcher WindowSmash. Pas de recompilation. En ligne, ayez les mêmes DLC. |
+| 5) Français / English | Même réglage de langue que le launcher WindowSmash. |
+
+N'utilise pas `Install SSBU.bat` ni les raccourcis « SSBU native » d'OpenSmash : ils le mettraient à jour au-delà de
+la version du groupe. Il faut une carte graphique avec un pilote **Vulkan 1.3**.
+
 ## Pour les développeurs
 
 - `WindowSmash Launcher.bat` : l'amorce (Git, clone et mise à jour de ce dépôt, redémarrage, puis le kit).
 - `kit/ws_setup.ps1` : l'installateur (PowerShell 5.1, doit rester en UTF-8 avec BOM).
 - `kit/ws_setup.py` : la partie Python (lecture des fichiers du jeu, puis compilation par `tools/build_game.py` de
   WindowSmash).
+- `OpenSmash Launcher.bat` : la même amorce pour OpenSmash (même clone de ce dépôt).
+- `kit-opensmash/os_setup.ps1` : l'installateur d'OpenSmash (version figée `$OS_COMMIT`, l'installateur d'OpenSmash
+  lancé avec `--no-self-update`, rollback écrit dans `config\graphics.ini` avant chaque lancement).
