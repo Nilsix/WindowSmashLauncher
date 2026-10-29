@@ -110,7 +110,7 @@ l'erreur **2203-0023**.
 | :--- | :--- |
 | 1) Installer / mettre à jour | Installe OpenSmash, ou le met à la version du groupe et recompile. |
 | 2) Lancer le jeu | Lance le jeu (netcode d'origine, sans rollback). |
-| 3) Diagnostic | Si le jeu rame ou plante : examine le PC (RAM, carte graphique et pilote, disque), les réglages, les rapports de plantage du jeu et son dernier log, donne des conseils (pilote, overlays comme Medal / OBS, disque lent, mode PC peu puissant) et crée `OpenSmash-setup-report.txt` sur le Bureau, à envoyer au groupe. |
+| 3) Diagnostic | Si le jeu rame, plante ou ne trouve pas le lobby : examine le PC (RAM, carte graphique et pilote, disque), les réglages, la connexion au lobby (DNS, réponse en UDP, VPN actif), les rapports de plantage du jeu et son dernier log, donne des conseils (pilote, overlays comme Medal / OBS, disque lent, mode PC peu puissant) et crée `OpenSmash-setup-report.txt` sur le Bureau, à envoyer au groupe. |
 | 4) Ajouter mes DLC | Les DLC que tu as achetés, dumpés de ta Switch (dossier de fichiers `.nsp`, noms d'origine) : même dossier que l'option 6 du launcher WindowSmash. Pas de recompilation. En ligne, ayez les mêmes DLC. |
 | 5) Débloquer tous les personnages | Les 74 personnages de base dans ta sauvegarde (les DLC restent au jeu). Après un premier lancement du jeu, jeu fermé ; une copie de la sauvegarde d'avant est gardée dans `build\save_backups`. |
 | 6) Mode PC peu puissant | On / off : résolution interne réduite de moitié et shaders chargés au fil des chargements (moins de mémoire), pour une carte graphique faible ou intégrée. |

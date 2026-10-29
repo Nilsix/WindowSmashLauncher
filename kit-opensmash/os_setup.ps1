@@ -27,7 +27,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.7 (2026-10-29)'
+$KitVersion = '1.8 (2026-10-29)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -705,6 +705,39 @@ function Set-OnlineLobby {
     return $was
 }
 
+# The lobby seen from this PC: its name resolved (DNS), then a JOIN packet as the game sends it (tools\net\ssbu_lobby.py:
+# "SU", protocol 1, kind 1, nonce, lobby code, name, build, LAN address, flags = 123 bytes), answered by WELCOME (kind 2:
+# nonce, address, cookie) or REJECT (3); a LEAVE (7, cookie) then drops the probe at once. Its own lobby code keeps it out
+# of every player's room list. -> @{ ip; ms } (ms = -1: no answer over UDP), $null when the name does not resolve
+function Test-Lobby([string]$server) {
+    $name, $port = $server -split ':', 2
+    if (-not $port) { $port = 39500 }
+    try { $ip = [Net.Dns]::GetHostAddresses($name) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1 } catch { $ip = $null }
+    if (-not $ip) { return $null }
+    $u = New-Object Net.Sockets.UdpClient
+    try {
+        $u.Client.ReceiveTimeout = 1000
+        $p = New-Object byte[] 123
+        $p[0] = 0x53; $p[1] = 0x55; $p[2] = 1; $p[3] = 1
+        $nonce = New-Object byte[] 8; (New-Object Random).NextBytes($nonce); [Array]::Copy($nonce, 0, $p, 4, 8)
+        $at = 12; foreach ($f in @(@('launcher-probe', 32), @('OpenSmash Launcher test', 32), @('opensmash-launcher-probe', 40))) { $b = [Text.Encoding]::ASCII.GetBytes($f[0]); [Array]::Copy($b, 0, $p, $at, $b.Length); $at += $f[1] }
+        $to = New-Object Net.IPEndPoint $ip, ([int]$port)
+        $from = New-Object Net.IPEndPoint ([Net.IPAddress]::Any), 0
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        for ($try = 0; $try -lt 3; $try++) {
+            $t0 = $sw.ElapsedMilliseconds
+            [void]$u.Send($p, $p.Length, $to)
+            try { $r = $u.Receive([ref]$from) } catch { continue }
+            if ($r.Length -ge 12 -and $r[0] -eq 0x53 -and $r[1] -eq 0x55 -and ($r[3] -eq 2 -or $r[3] -eq 3)) {
+                $ms = $sw.ElapsedMilliseconds - $t0
+                if ($r[3] -eq 2 -and $r.Length -ge 24) { $q = [byte[]]((0x53, 0x55, 1, 7) + $r[16..23]); [void]$u.Send($q, $q.Length, $to) }
+                return @{ ip = $ip; ms = $ms }
+            }
+        }
+        return @{ ip = $ip; ms = -1 }
+    } catch { return @{ ip = $ip; ms = -1 } } finally { $u.Close() }
+}
+
 # Menu 3, when the game lags or crashes: the PC (CPU, RAM, GPU and driver, the build folder's disk), the settings of
 # graphics.ini, the game's own crash and freeze reports (work\ssbu_native_crash.txt / _freeze.txt, a minidump beside them)
 # and the newest game log go into the report; what they point at is said as advice.
@@ -741,6 +774,22 @@ function Diagnose-Game {
         }
     }
     $online = Set-OnlineLobby
+    # online play: the lobby answering this PC, and what can stand in its way (a VPN or tunnel adapter, a system proxy)
+    $srv = $OS_LOBBY
+    if (Test-Path -LiteralPath $ini) { $sl = (Get-Content -LiteralPath $ini) -match '^[ \t]*online_server[ \t]*=' | Select-Object -First 1; if ($sl) { $srv = ($sl -replace '^[^=]*=', '').Trim() } }
+    $vpn = @()
+    try { $vpn = @(Get-NetAdapter -ErrorAction Stop | Where-Object { $_.Status -eq 'Up' -and "$($_.InterfaceDescription) $($_.Name)" -match 'VPN|TAP-|Wintun|WireGuard|OpenVPN|Tailscale|ZeroTier|Hamachi|Radmin|NordLynx|Proton|Amnezia|Outline|sing-box|Hiddify|v2ray|Xray|Clash|WARP|\bTUN\b' } | ForEach-Object { $_.InterfaceDescription }) } catch {}
+    if ($vpn) { $Script:Info['VPN / tunnel'] = $vpn -join '; ' }
+    try { $px = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop; if ($px.ProxyEnable -eq 1) { $Script:Info['System proxy'] = "$($px.ProxyServer) (the game's UDP does not go through it)" } } catch {}
+    $lob = Test-Lobby $srv
+    if (-not $lob) {
+        $Script:Info['Lobby'] = "$srv : the name does not resolve (DNS)"
+        & $tip "The lobby's address ($srv) cannot be found (DNS): set the DNS of Windows to 1.1.1.1 or 8.8.8.8, or turn the VPN off or on, then try again." "L'adresse du lobby ($srv) est introuvable (DNS) : mets le DNS de Windows sur 1.1.1.1 ou 8.8.8.8, ou coupe / active le VPN, puis réessaie."
+    } elseif ($lob.ms -lt 0) {
+        $Script:Info['Lobby'] = "$srv = $($lob.ip): NO answer over UDP (3 tries)"
+        if ($vpn) { & $tip "The lobby ($srv) does not answer this PC over UDP while a VPN or tunnel is on ($($vpn[0])): turn it off and try again; to keep one, it must carry UDP (WireGuard) or leave the game out (split tunnelling)." "Le lobby ($srv) ne répond pas à ce PC en UDP pendant qu'un VPN ou tunnel est actif ($($vpn[0])) : coupe-le et réessaie ; pour en garder un, il doit faire passer l'UDP (WireGuard) ou laisser le jeu hors du VPN (split tunneling)." }
+        else { & $tip "The lobby ($srv) does not answer this PC over UDP: the internet provider, the router or an antivirus / firewall blocks it. Test once on a phone's connection shared over Wi-Fi; if it works there, a VPN that carries UDP (WireGuard) gets round the provider." "Le lobby ($srv) ne répond pas à ce PC en UDP : le fournisseur internet, la box ou un antivirus / pare-feu le bloque. Teste une fois avec la connexion d'un téléphone partagée en Wi-Fi ; si ça marche, un VPN qui fait passer l'UDP (WireGuard) contourne le fournisseur." }
+    } else { $Script:Info['Lobby'] = "$srv = $($lob.ip): answers in $($lob.ms) ms" }
     if ($online) { & $tip "Online play was set to '$online' (F1 > Experimental): a room code only reaches that host's game while it is open, else Local Wireless shows error 2203-0023. Switched back to the public lobby: use Local Wireless > Rooms list." "Le jeu en ligne était réglé sur '$online' (F1 > Experimental) : un code de room ne marche que tant que le jeu de cet hôte est ouvert, sinon Local Wireless affiche l'erreur 2203-0023. Remis sur le lobby public : utilise Local Wireless > liste des rooms." }
     [void]$Script:Extra.Add('')
     $work = Join-Path (Get-BuildDir) 'work'
@@ -764,7 +813,11 @@ function Diagnose-Game {
     $log = Get-ChildItem -LiteralPath (Join-Path (Get-BuildDir) 'logs') -Filter 'game_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
     if ($log) {
         $lines = Get-Content -LiteralPath $log.FullName
-        $dev = $lines | Where-Object { $_ -match '^nvn_vk: using device' } | Select-Object -First 1
+        # public addresses other than the lobby's are hidden in the lines copied to the report (it goes to the group)
+        $keep = if ($lob) { "$($lob.ip)" } else { '' }
+        $hide = [Text.RegularExpressions.MatchEvaluator]{ param($m) if ($m.Value -eq $keep -or $m.Value -match '^(10|127)\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\.') { $m.Value } else { 'x.x.x.x' } }.GetNewClosure()
+        $clean = { param($s) [regex]::Replace($s, '\b\d{1,3}(\.\d{1,3}){3}\b', $hide) }
+        $dev =$lines | Where-Object { $_ -match '^nvn_vk: using device' } | Select-Object -First 1
         if ($dev) {
             $gname = $dev -replace '^nvn_vk: using device \d+: ', '' -replace ' \(loader.*', ''
             $Script:Info['GPU used by the game'] = $gname
@@ -772,10 +825,16 @@ function Diagnose-Game {
             if ($gname -match 'GTX (9\d\d|10[0-6]\d|1650)|RX (4\d0|5[0-6]0)|MX\d{3}|Vega|Radeon\(TM\) Graphics|Intel') { & $tip "The game runs on a modest GPU ($gname): turn low spec mode on (menu 6)." "Le jeu tourne sur une carte graphique modeste ($gname) : active le mode PC peu puissant (menu 6)." }
         }
         [void]$Script:Extra.Add(''); [void]$Script:Extra.Add("--- $($log.Name): problems and frame times")
-        foreach ($x in ($lines | Where-Object { $_ -match 'error|fail|lost|out of memory|watchdog|freeze|nvn_perf: frames|fps avg' } | Select-Object -Last 40)) { [void]$Script:Extra.Add($x) }
+        foreach ($x in ($lines | Where-Object { $_ -match 'error|fail|lost|out of memory|watchdog|freeze|nvn_perf: frames|fps avg' } | Select-Object -Last 40)) { [void]$Script:Extra.Add((& $clean $x)) }
         [void]$Script:Extra.Add(''); [void]$Script:Extra.Add("--- $($log.Name): end")
-        foreach ($x in ($lines | Select-Object -Last 30)) { [void]$Script:Extra.Add($x) }
-        if (-not $online -and ($lines -match 'nn::err::ShowError: result 0x2ecb')) { & $tip 'The game showed error 2203-0023: Local Wireless got no answer from the lobby within 3 s. Check the internet connection (a VPN or an antivirus can block the game); if it keeps happening, tell the group (the lobby may be down).' 'Le jeu a affiché l''erreur 2203-0023 : Local Wireless n''a pas eu de réponse du lobby en 3 s. Vérifie la connexion internet (un VPN ou un antivirus peut bloquer le jeu) ; si ça continue, préviens le groupe (le lobby est peut-être en panne).' }
+        foreach ($x in ($lines | Select-Object -Last 30)) { [void]$Script:Extra.Add((& $clean $x)) }
+        if (-not $online -and $lob -and $lob.ms -ge 0 -and ($lines -match 'nn::err::ShowError: result 0x2ecb')) { & $tip 'The game showed error 2203-0023 (Local Wireless got no answer from the lobby within 3 s), but the lobby answers this PC now: probably a short network cut. Try again; if it comes back, send this report.' 'Le jeu a affiché l''erreur 2203-0023 (Local Wireless sans réponse du lobby en 3 s), mais le lobby répond à ce PC maintenant : sans doute une coupure réseau. Réessaie ; si ça revient, envoie ce rapport.' }
+        # the game's online lines (lobby, joins, rollback) without the Local Wireless state and scan chatter
+        $net = @($lines | Where-Object { $_ -match '^\[(online|rbnet)\]' -and $_ -notmatch 'ldn: (state|scan)' })
+        if ($net) {
+            [void]$Script:Extra.Add(''); [void]$Script:Extra.Add("--- $($log.Name): online")
+            foreach ($x in (@($net | Select-Object -First 12) + @($net | Select-Object -Skip 12 | Select-Object -Last 20))) { [void]$Script:Extra.Add((& $clean $x)) }
+        }
         # the median frame time of each 300-frame window: one stall (loading, a 3 s wait) lowers the average, not the median
         $slow = @($lines | Where-Object { $_ -match '^nvn_perf: frames .* median ([\d.]+)' } | ForEach-Object { [double]([regex]::Match($_, 'median ([\d.]+)').Groups[1].Value) } | Where-Object { $_ -gt 20 })
         if ($slow.Count -ge 3) { & $tip 'The game ran under 50 fps many times: close other programs, turn low spec mode on (menu 6); the first matches also prepare shaders.' 'Le jeu est souvent passé sous 50 fps : ferme les autres programmes, active le mode PC peu puissant (menu 6) ; les premières parties préparent aussi des shaders.' }
