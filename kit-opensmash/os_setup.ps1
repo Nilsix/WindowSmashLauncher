@@ -27,7 +27,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.10 (2026-10-29)'
+$KitVersion = '1.11 (2026-10-29)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -707,9 +707,13 @@ function Set-OnlineLobby {
 
 # The lobby seen from this PC: its name resolved (DNS), then a JOIN packet as the game sends it (tools\net\ssbu_lobby.py:
 # "SU", protocol 1, kind 1, nonce, lobby code, name, build, LAN address, flags = 123 bytes), answered by WELCOME (kind 2:
-# nonce, address, cookie) or REJECT (3); a LEAVE (7, cookie) then drops the probe at once. Its own lobby code keeps it out
-# of every player's room list. -> @{ ip; ms } (ms = -1: no answer over UDP), $null when the name does not resolve
-function Test-Lobby([string]$server) {
+# nonce, address, cookie) or REJECT (3). Joined, it pings once a second from the same port for $secs seconds, as the game
+# does (PING 4: cookie, 8 bytes echoed in the PONG 5, peer count = 21 bytes): a filter that lets a UDP flow start and
+# cuts it a few seconds later shows here as answers that stop (the game logs "lost the lobby" after 10 s without one).
+# A LEAVE (7, cookie) then drops the probe at once. Its own lobby code keeps it out of every player's room list.
+# -> @{ ip; ms; sent; got; last } (ms = -1: no answer over UDP; last = ms after joining of the last answer), $null when
+# the name does not resolve
+function Test-Lobby([string]$server, [int]$secs = 30) {
     $name, $port = $server -split ':', 2
     if (-not $port) { $port = 39500 }
     try { $ip = [Net.Dns]::GetHostAddresses($name) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1 } catch { $ip = $null }
@@ -730,12 +734,26 @@ function Test-Lobby([string]$server) {
             try { $r = $u.Receive([ref]$from) } catch { continue }
             if ($r.Length -ge 12 -and $r[0] -eq 0x53 -and $r[1] -eq 0x55 -and ($r[3] -eq 2 -or $r[3] -eq 3)) {
                 $ms = $sw.ElapsedMilliseconds - $t0
-                if ($r[3] -eq 2 -and $r.Length -ge 24) { $q = [byte[]]((0x53, 0x55, 1, 7) + $r[16..23]); [void]$u.Send($q, $q.Length, $to) }
-                return @{ ip = $ip; ms = $ms }
+                $res = @{ ip = $ip; ms = $ms; sent = 0; got = 0; last = 0 }
+                if ($r[3] -ne 2 -or $r.Length -lt 24) { return $res }
+                $cookie = [byte[]]$r[16..23]
+                $joined = $sw.ElapsedMilliseconds
+                while ($sw.ElapsedMilliseconds - $joined -lt 1000 * $secs) {
+                    $q = [byte[]]((0x53, 0x55, 1, 4) + $cookie + [BitConverter]::GetBytes([int64]$sw.ElapsedMilliseconds) + 0)
+                    [void]$u.Send($q, $q.Length, $to); $res.sent++
+                    $next = $sw.ElapsedMilliseconds + 1000
+                    while ($sw.ElapsedMilliseconds -lt $next) {
+                        $u.Client.ReceiveTimeout = [int][math]::Max(1, $next - $sw.ElapsedMilliseconds)
+                        try { $a = $u.Receive([ref]$from) } catch { $w = $next - $sw.ElapsedMilliseconds; if ($w -gt 0) { Start-Sleep -Milliseconds $w }; break }
+                        if ($a.Length -ge 12 -and $a[0] -eq 0x53 -and $a[1] -eq 0x55 -and $a[3] -eq 5) { $res.got++; $res.last = $sw.ElapsedMilliseconds - $joined }
+                    }
+                }
+                $q = [byte[]]((0x53, 0x55, 1, 7) + $cookie); [void]$u.Send($q, $q.Length, $to)
+                return $res
             }
         }
         return @{ ip = $ip; ms = -1 }
-    } catch { return @{ ip = $ip; ms = -1 } } finally { $u.Close() }
+    } catch { if ($res) { return $res }; return @{ ip = $ip; ms = -1 } } finally { $u.Close() }
 }
 
 # Menu 3, when the game lags or crashes: the PC (CPU, RAM, GPU and driver, the build folder's disk), the settings of
@@ -784,19 +802,35 @@ function Diagnose-Game {
     $dpi = @(Get-Process -Name winws, winws2, goodbyedpi -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name).exe" } | Sort-Object -Unique)
     if ($dpi) { $Script:Info['DPI bypass'] = "$($dpi -join ', ') (not a VPN: the game goes straight through the provider)" }
     try { $px = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop; if ($px.ProxyEnable -eq 1) { $Script:Info['System proxy'] = "$($px.ProxyServer) (the game's UDP does not go through it)" } } catch {}
+    Say (L '  Testing the connection to the lobby (30 s)...' '  Test de la connexion au lobby (30 s)...')
     $lob = Test-Lobby $srv
+    # blocked: no answer at all, or answers that stopped more than 5 s before the end of the test (a filter cutting the flow)
+    $blocked = $false
     if (-not $lob) {
         $Script:Info['Lobby'] = "$srv : the name does not resolve (DNS)"
         & $tip "The lobby's address ($srv) cannot be found (DNS): set the DNS of Windows to 1.1.1.1 or 8.8.8.8, or turn the VPN off or on, then try again." "L'adresse du lobby ($srv) est introuvable (DNS) : mets le DNS de Windows sur 1.1.1.1 ou 8.8.8.8, ou coupe / active le VPN, puis réessaie."
     } elseif ($lob.ms -lt 0) {
+        $blocked = $true
         $Script:Info['Lobby'] = "$srv = $($lob.ip): NO answer over UDP (3 tries)"
-        if ($dpi) { & $tip "$($dpi -join ', ') (zapret / GoodbyeDPI) is running: it is not a VPN, the game goes straight through the internet provider. If its game filter is on (UDP ports 1024-65535, in zapret's service.bat), it alters the game's packets: turn the game filter off and try again." "$($dpi -join ', ') (zapret / GoodbyeDPI) tourne : ce n'est pas un VPN, le jeu passe directement par le fournisseur internet. Si son filtre jeux est activé (ports UDP 1024-65535, dans le service.bat de zapret), il modifie les paquets du jeu : désactive le filtre jeux et réessaie." }
+        $howEn = 'does not answer this PC over UDP'; $howFr = 'ne répond pas à ce PC en UDP'
+    } else {
+        $Script:Info['Lobby'] = "$srv = $($lob.ip): answers in $($lob.ms) ms; pings over 30 s: $($lob.got) of $($lob.sent) answered, the last $([int]($lob.last / 1000)) s after joining"
+        if ($lob.sent -gt 0 -and $lob.last -lt ($lob.sent - 5) * 1000) {
+            $blocked = $true
+            $Script:Info['Lobby'] += ': the connection was CUT'
+            $cutAt = [int]($lob.last / 1000)
+            $howEn = "answered this PC, then stopped after $cutAt s (something cuts the game's UDP after a few seconds; the game logs 'lost the lobby')"
+            $howFr = "a répondu à ce PC, puis s'est tu au bout de $cutAt s (quelque chose coupe l'UDP du jeu après quelques secondes ; le jeu écrit 'lost the lobby')"
+        }
+    }
+    if ($blocked) {
+        if ($dpi) { & $tip "$($dpi -join ', ') (zapret / GoodbyeDPI) is running: it is not a VPN, the game goes straight through the internet provider. Test: stop it for a minute (close it, or stop its service) and run menu 3 again. If the lobby then keeps answering, zapret is the cause: turn its game filter off (UDP ports 1024-65535, in zapret's service.bat) or use a strategy without it. If it is still cut, the provider cuts it." "$($dpi -join ', ') (zapret / GoodbyeDPI) tourne : ce n'est pas un VPN, le jeu passe directement par le fournisseur internet. Test : arrête-le une minute (ferme-le, ou arrête son service) et relance l'option 3. Si le lobby répond alors sans coupure, c'est zapret : désactive son filtre jeux (ports UDP 1024-65535, dans le service.bat de zapret) ou prends une stratégie sans. Si ça coupe encore, c'est le fournisseur." }
         # the game speaks UDP only: a VPN must carry UDP, and a proxy app in system proxy mode carries only the TCP of the
         # programs that ask it (browsers); the game then goes around it, straight to a provider that may block the lobby
-        if ($vpn) { & $tip "The lobby ($srv) does not answer this PC over UDP through the VPN or tunnel ($($vpn[0])): the game needs UDP (port 39500). In the VPN app pick the TUN / full VPN mode with UDP on, or a server whose protocol carries UDP (AmneziaWG, WireGuard, Hysteria2, VLESS or Shadowsocks with UDP); if the VPN is optional where you live, test once with it off." "Le lobby ($srv) ne répond pas à ce PC en UDP à travers le VPN ou tunnel ($($vpn[0])) : le jeu a besoin de l'UDP (port 39500). Dans l'appli VPN, choisis le mode TUN / VPN complet avec l'UDP activé, ou un serveur dont le protocole fait passer l'UDP (AmneziaWG, WireGuard, Hysteria2, VLESS ou Shadowsocks avec UDP) ; si le VPN n'est pas obligatoire chez toi, teste une fois sans." }
-        elseif ($px.ProxyEnable -eq 1) { & $tip "The lobby ($srv) does not answer this PC over UDP, and a system proxy is set ($($px.ProxyServer)): a proxy app (v2rayN, Hiddify, Nekoray, Clash, Happ...) in system proxy mode carries only the browsers' TCP, and the game's UDP goes around it. Switch the app to TUN mode (also called VPN mode) with UDP on, then try again." "Le lobby ($srv) ne répond pas à ce PC en UDP, et un proxy système est réglé ($($px.ProxyServer)) : une appli proxy (v2rayN, Hiddify, Nekoray, Clash, Happ...) en mode proxy système ne fait passer que le TCP des navigateurs, l'UDP du jeu passe à côté. Mets l'appli en mode TUN (aussi appelé mode VPN) avec l'UDP activé, puis réessaie." }
-        else { & $tip "The lobby ($srv) does not answer this PC over UDP: the internet provider, the router or an antivirus / firewall blocks it. Test once on a phone's connection shared over Wi-Fi; if it works there, a VPN that carries UDP (WireGuard) gets round the provider." "Le lobby ($srv) ne répond pas à ce PC en UDP : le fournisseur internet, la box ou un antivirus / pare-feu le bloque. Teste une fois avec la connexion d'un téléphone partagée en Wi-Fi ; si ça marche, un VPN qui fait passer l'UDP (WireGuard) contourne le fournisseur." }
-    } else { $Script:Info['Lobby'] = "$srv = $($lob.ip): answers in $($lob.ms) ms" }
+        if ($vpn) { & $tip "The lobby ($srv) $howEn through the VPN or tunnel ($($vpn[0])): the game needs UDP (port 39500). In the VPN app pick the TUN / full VPN mode with UDP on, or a server whose protocol carries UDP (AmneziaWG, WireGuard, Hysteria2, VLESS or Shadowsocks with UDP); if the VPN is optional where you live, test once with it off." "Le lobby ($srv) $howFr à travers le VPN ou tunnel ($($vpn[0])) : le jeu a besoin de l'UDP (port 39500). Dans l'appli VPN, choisis le mode TUN / VPN complet avec l'UDP activé, ou un serveur dont le protocole fait passer l'UDP (AmneziaWG, WireGuard, Hysteria2, VLESS ou Shadowsocks avec UDP) ; si le VPN n'est pas obligatoire chez toi, teste une fois sans." }
+        elseif ($px.ProxyEnable -eq 1) { & $tip "The lobby ($srv) $howEn, and a system proxy is set ($($px.ProxyServer)): a proxy app (v2rayN, Hiddify, Nekoray, Clash, Happ...) in system proxy mode carries only the browsers' TCP, and the game's UDP goes around it. Switch the app to TUN mode (also called VPN mode) with UDP on, then try again." "Le lobby ($srv) $howFr, et un proxy système est réglé ($($px.ProxyServer)) : une appli proxy (v2rayN, Hiddify, Nekoray, Clash, Happ...) en mode proxy système ne fait passer que le TCP des navigateurs, l'UDP du jeu passe à côté. Mets l'appli en mode TUN (aussi appelé mode VPN) avec l'UDP activé, puis réessaie." }
+        else { & $tip "The lobby ($srv) $($howEn): the internet provider, the router or an antivirus / firewall blocks it. Test once on a phone's connection shared over Wi-Fi; if it works there, a VPN that carries UDP (AmneziaWG, WireGuard) in TUN mode gets round the provider." "Le lobby ($srv) $howFr : le fournisseur internet, la box ou un antivirus / pare-feu le bloque. Teste une fois avec la connexion d'un téléphone partagée en Wi-Fi ; si ça marche, un VPN qui fait passer l'UDP (AmneziaWG, WireGuard) en mode TUN contourne le fournisseur." }
+    }
     if ($online) { & $tip "Online play was set to '$online' (F1 > Experimental): a room code only reaches that host's game while it is open, else Local Wireless shows error 2203-0023. Switched back to the public lobby: use Local Wireless > Rooms list." "Le jeu en ligne était réglé sur '$online' (F1 > Experimental) : un code de room ne marche que tant que le jeu de cet hôte est ouvert, sinon Local Wireless affiche l'erreur 2203-0023. Remis sur le lobby public : utilise Local Wireless > liste des rooms." }
     [void]$Script:Extra.Add('')
     $work = Join-Path (Get-BuildDir) 'work'
@@ -835,7 +869,7 @@ function Diagnose-Game {
         foreach ($x in ($lines | Where-Object { $_ -match 'error|fail|lost|out of memory|watchdog|freeze|nvn_perf: frames|fps avg' } | Select-Object -Last 40)) { [void]$Script:Extra.Add((& $clean $x)) }
         [void]$Script:Extra.Add(''); [void]$Script:Extra.Add("--- $($log.Name): end")
         foreach ($x in ($lines | Select-Object -Last 30)) { [void]$Script:Extra.Add((& $clean $x)) }
-        if (-not $online -and $lob -and $lob.ms -ge 0 -and ($lines -match 'nn::err::ShowError: result 0x2ecb')) { & $tip 'The game showed error 2203-0023 (Local Wireless got no answer from the lobby within 3 s), but the lobby answers this PC now: probably a short network cut. Try again; if it comes back, send this report.' 'Le jeu a affiché l''erreur 2203-0023 (Local Wireless sans réponse du lobby en 3 s), mais le lobby répond à ce PC maintenant : sans doute une coupure réseau. Réessaie ; si ça revient, envoie ce rapport.' }
+        if (-not $online -and $lob -and -not $blocked -and ($lines -match 'nn::err::ShowError: result 0x2ecb|^\[online\] lost the lobby')) { & $tip 'The game lost the lobby or showed error 2203-0023 (no answer from the lobby), but the lobby kept answering this 30 s test: probably a short network cut, or a filter that cuts only longer sessions. Try again; if it comes back, send this report.' 'Le jeu a perdu le lobby ou affiché l''erreur 2203-0023 (pas de réponse du lobby), mais le lobby a répondu pendant tout ce test de 30 s : sans doute une coupure réseau, ou un filtre qui ne coupe que les sessions plus longues. Réessaie ; si ça revient, envoie ce rapport.' }
         # the game's online lines (lobby, joins, rollback) without the Local Wireless state and scan chatter
         $net = @($lines | Where-Object { $_ -match '^\[(online|rbnet)\]' -and $_ -notmatch 'ldn: (state|scan)' })
         if ($net) {
