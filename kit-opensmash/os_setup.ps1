@@ -27,7 +27,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.8 (2026-10-29)'
+$KitVersion = '1.9 (2026-10-29)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -787,7 +787,10 @@ function Diagnose-Game {
         & $tip "The lobby's address ($srv) cannot be found (DNS): set the DNS of Windows to 1.1.1.1 or 8.8.8.8, or turn the VPN off or on, then try again." "L'adresse du lobby ($srv) est introuvable (DNS) : mets le DNS de Windows sur 1.1.1.1 ou 8.8.8.8, ou coupe / active le VPN, puis réessaie."
     } elseif ($lob.ms -lt 0) {
         $Script:Info['Lobby'] = "$srv = $($lob.ip): NO answer over UDP (3 tries)"
-        if ($vpn) { & $tip "The lobby ($srv) does not answer this PC over UDP while a VPN or tunnel is on ($($vpn[0])): turn it off and try again; to keep one, it must carry UDP (WireGuard) or leave the game out (split tunnelling)." "Le lobby ($srv) ne répond pas à ce PC en UDP pendant qu'un VPN ou tunnel est actif ($($vpn[0])) : coupe-le et réessaie ; pour en garder un, il doit faire passer l'UDP (WireGuard) ou laisser le jeu hors du VPN (split tunneling)." }
+        # the game speaks UDP only: a VPN must carry UDP, and a proxy app in system proxy mode carries only the TCP of the
+        # programs that ask it (browsers); the game then goes around it, straight to a provider that may block the lobby
+        if ($vpn) { & $tip "The lobby ($srv) does not answer this PC over UDP through the VPN or tunnel ($($vpn[0])): the game needs UDP (port 39500). In the VPN app pick the TUN / full VPN mode with UDP on, or a server whose protocol carries UDP (AmneziaWG, WireGuard, Hysteria2, VLESS or Shadowsocks with UDP); if the VPN is optional where you live, test once with it off." "Le lobby ($srv) ne répond pas à ce PC en UDP à travers le VPN ou tunnel ($($vpn[0])) : le jeu a besoin de l'UDP (port 39500). Dans l'appli VPN, choisis le mode TUN / VPN complet avec l'UDP activé, ou un serveur dont le protocole fait passer l'UDP (AmneziaWG, WireGuard, Hysteria2, VLESS ou Shadowsocks avec UDP) ; si le VPN n'est pas obligatoire chez toi, teste une fois sans." }
+        elseif ($px.ProxyEnable -eq 1) { & $tip "The lobby ($srv) does not answer this PC over UDP, and a system proxy is set ($($px.ProxyServer)): a proxy app (v2rayN, Hiddify, Nekoray, Clash, Happ...) in system proxy mode carries only the browsers' TCP, and the game's UDP goes around it. Switch the app to TUN mode (also called VPN mode) with UDP on, then try again." "Le lobby ($srv) ne répond pas à ce PC en UDP, et un proxy système est réglé ($($px.ProxyServer)) : une appli proxy (v2rayN, Hiddify, Nekoray, Clash, Happ...) en mode proxy système ne fait passer que le TCP des navigateurs, l'UDP du jeu passe à côté. Mets l'appli en mode TUN (aussi appelé mode VPN) avec l'UDP activé, puis réessaie." }
         else { & $tip "The lobby ($srv) does not answer this PC over UDP: the internet provider, the router or an antivirus / firewall blocks it. Test once on a phone's connection shared over Wi-Fi; if it works there, a VPN that carries UDP (WireGuard) gets round the provider." "Le lobby ($srv) ne répond pas à ce PC en UDP : le fournisseur internet, la box ou un antivirus / pare-feu le bloque. Teste une fois avec la connexion d'un téléphone partagée en Wi-Fi ; si ça marche, un VPN qui fait passer l'UDP (WireGuard) contourne le fournisseur." }
     } else { $Script:Info['Lobby'] = "$srv = $($lob.ip): answers in $($lob.ms) ms" }
     if ($online) { & $tip "Online play was set to '$online' (F1 > Experimental): a room code only reaches that host's game while it is open, else Local Wireless shows error 2203-0023. Switched back to the public lobby: use Local Wireless > Rooms list." "Le jeu en ligne était réglé sur '$online' (F1 > Experimental) : un code de room ne marche que tant que le jeu de cet hôte est ouvert, sinon Local Wireless affiche l'erreur 2203-0023. Remis sur le lobby public : utilise Local Wireless > liste des rooms." }
