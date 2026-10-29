@@ -27,7 +27,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.9 (2026-10-29)'
+$KitVersion = '1.10 (2026-10-29)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -780,6 +780,9 @@ function Diagnose-Game {
     $vpn = @()
     try { $vpn = @(Get-NetAdapter -ErrorAction Stop | Where-Object { $_.Status -eq 'Up' -and "$($_.InterfaceDescription) $($_.Name)" -match 'VPN|TAP-|Wintun|WireGuard|OpenVPN|Tailscale|ZeroTier|Hamachi|Radmin|NordLynx|Proton|Amnezia|Outline|sing-box|Hiddify|v2ray|Xray|Clash|WARP|\bTUN\b' } | ForEach-Object { $_.InterfaceDescription }) } catch {}
     if ($vpn) { $Script:Info['VPN / tunnel'] = $vpn -join '; ' }
+    # DPI bypass tools (zapret's winws.exe, GoodbyeDPI) rewrite packets through WinDivert: no adapter, no tunnel
+    $dpi = @(Get-Process -Name winws, winws2, goodbyedpi -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name).exe" } | Sort-Object -Unique)
+    if ($dpi) { $Script:Info['DPI bypass'] = "$($dpi -join ', ') (not a VPN: the game goes straight through the provider)" }
     try { $px = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop; if ($px.ProxyEnable -eq 1) { $Script:Info['System proxy'] = "$($px.ProxyServer) (the game's UDP does not go through it)" } } catch {}
     $lob = Test-Lobby $srv
     if (-not $lob) {
@@ -787,6 +790,7 @@ function Diagnose-Game {
         & $tip "The lobby's address ($srv) cannot be found (DNS): set the DNS of Windows to 1.1.1.1 or 8.8.8.8, or turn the VPN off or on, then try again." "L'adresse du lobby ($srv) est introuvable (DNS) : mets le DNS de Windows sur 1.1.1.1 ou 8.8.8.8, ou coupe / active le VPN, puis réessaie."
     } elseif ($lob.ms -lt 0) {
         $Script:Info['Lobby'] = "$srv = $($lob.ip): NO answer over UDP (3 tries)"
+        if ($dpi) { & $tip "$($dpi -join ', ') (zapret / GoodbyeDPI) is running: it is not a VPN, the game goes straight through the internet provider. If its game filter is on (UDP ports 1024-65535, in zapret's service.bat), it alters the game's packets: turn the game filter off and try again." "$($dpi -join ', ') (zapret / GoodbyeDPI) tourne : ce n'est pas un VPN, le jeu passe directement par le fournisseur internet. Si son filtre jeux est activé (ports UDP 1024-65535, dans le service.bat de zapret), il modifie les paquets du jeu : désactive le filtre jeux et réessaie." }
         # the game speaks UDP only: a VPN must carry UDP, and a proxy app in system proxy mode carries only the TCP of the
         # programs that ask it (browsers); the game then goes around it, straight to a provider that may block the lobby
         if ($vpn) { & $tip "The lobby ($srv) does not answer this PC over UDP through the VPN or tunnel ($($vpn[0])): the game needs UDP (port 39500). In the VPN app pick the TUN / full VPN mode with UDP on, or a server whose protocol carries UDP (AmneziaWG, WireGuard, Hysteria2, VLESS or Shadowsocks with UDP); if the VPN is optional where you live, test once with it off." "Le lobby ($srv) ne répond pas à ce PC en UDP à travers le VPN ou tunnel ($($vpn[0])) : le jeu a besoin de l'UDP (port 39500). Dans l'appli VPN, choisis le mode TUN / VPN complet avec l'UDP activé, ou un serveur dont le protocole fait passer l'UDP (AmneziaWG, WireGuard, Hysteria2, VLESS ou Shadowsocks avec UDP) ; si le VPN n'est pas obligatoire chez toi, teste une fois sans." }
