@@ -27,7 +27,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.6 (2026-10-26)'
+$KitVersion = '1.7 (2026-10-29)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -37,6 +37,7 @@ $EXPECT_VERSION = '13.0.5'   # OpenSmash takes 13.0.4 or 13.0.5; the group plays
 # the game program's (exefs\main's) build id -> its update
 $BUILD_IDS = @{ '21450C647B8C5940ED5B68218EA128FD3C5D597D' = '13.0.5'; '3EAE0063B12FD81E99FB5980BA56297049EA94F9' = '13.0.4' }
 $SETUP_STEPS = @('deps', 'stage', 'convert', 'modules', 'tables', 'lift', 'sdk', 'compile', 'nro', 'link', 'check')   # scripts\setup.py's
+$OS_LOBBY = 'opensmash-lobby.duckdns.org:39500'   # the public lobby (runtime\net_relay.c NET_PUBLIC_LOBBY): the group's rooms
 
 # ---- paths ----------------------------------------------------------------------------------------------------------
 $HomeDir  = Join-Path $env:LOCALAPPDATA 'WindowSmash-setup'          # (shared with the WindowSmash kit: lang.txt, inputs.json)
@@ -680,6 +681,30 @@ function Set-Rollback([bool]$on) {
     } catch { Warn (L "W72 rollback setting not written ($($_.Exception.Message))" "W72 réglage du rollback non écrit ($($_.Exception.Message))"); return $false }
 }
 
+# Online play through OpenSmash's public lobby, where the group's Local Wireless rooms are listed. A room code from
+# F1 > Experimental (online_mode = join / host) reaches only that one host's game while it runs in host mode: without
+# it, Local Wireless freezes 3 s and shows error 2203-0023 (ldn 0x2ecb, "wireless off", R_LDN_OFF in runtime\nnldn.c);
+# lan and off show the same error. online_mode = lobby without online_server means a lobby on this PC (net_relay.c).
+# -> the online_mode that was replaced, '' when nothing changed
+function Set-OnlineLobby {
+    $ini = Join-Path (Get-BuildDir) 'config\graphics.ini'
+    if (-not (Test-Path -LiteralPath $ini)) { return '' }
+    $lines = Get-Content -LiteralPath $ini
+    $get = { param($k) $l = $lines | Where-Object { $_ -match ('^[ \t]*' + $k + '[ \t]*=') } | Select-Object -First 1; if ($null -eq $l) { $null } else { ($l -replace '^[^=]*=', '').Trim() } }
+    $mode = & $get 'online_mode'; $server = & $get 'online_server'
+    $was = ''
+    if ($null -ne $mode -and $mode -match '^(join|host|lan|off|no|false|0|)$') {
+        $was = if ($mode) { $mode } else { 'off' }
+        if (-not (Set-IniKey 'online_mode' 'lobby')) { return '' }
+        $mode = 'lobby'
+    }
+    if ($mode -eq 'lobby' -and ($null -eq $server -or $server -match '^(off|no|false|0|)$')) {
+        if (-not (Set-IniKey 'online_server' $OS_LOBBY)) { return '' }
+        if (-not $was) { $was = "lobby, online_server = $(if ($server) { $server } else { '(none)' })" }
+    }
+    return $was
+}
+
 # Menu 3, when the game lags or crashes: the PC (CPU, RAM, GPU and driver, the build folder's disk), the settings of
 # graphics.ini, the game's own crash and freeze reports (work\ssbu_native_crash.txt / _freeze.txt, a minidump beside them)
 # and the newest game log go into the report; what they point at is said as advice.
@@ -715,6 +740,8 @@ function Diagnose-Game {
             if (Set-IniKey 'shader_load' 'loading') { & $tip "All shaders were loaded at start (about 10 GB of memory, a minute of loading) on a PC with $([int]$ram) GB: switched to loading them at each loading screen." "Tous les shaders étaient chargés au démarrage (environ 10 Go de mémoire, une minute de chargement) sur un PC de $([int]$ram) Go : passé au chargement à chaque écran de chargement." }
         }
     }
+    $online = Set-OnlineLobby
+    if ($online) { & $tip "Online play was set to '$online' (F1 > Experimental): a room code only reaches that host's game while it is open, else Local Wireless shows error 2203-0023. Switched back to the public lobby: use Local Wireless > Rooms list." "Le jeu en ligne était réglé sur '$online' (F1 > Experimental) : un code de room ne marche que tant que le jeu de cet hôte est ouvert, sinon Local Wireless affiche l'erreur 2203-0023. Remis sur le lobby public : utilise Local Wireless > liste des rooms." }
     [void]$Script:Extra.Add('')
     $work = Join-Path (Get-BuildDir) 'work'
     foreach ($r in 'ssbu_native_crash.txt', 'ssbu_native_freeze.txt') {
@@ -748,7 +775,9 @@ function Diagnose-Game {
         foreach ($x in ($lines | Where-Object { $_ -match 'error|fail|lost|out of memory|watchdog|freeze|nvn_perf: frames|fps avg' } | Select-Object -Last 40)) { [void]$Script:Extra.Add($x) }
         [void]$Script:Extra.Add(''); [void]$Script:Extra.Add("--- $($log.Name): end")
         foreach ($x in ($lines | Select-Object -Last 30)) { [void]$Script:Extra.Add($x) }
-        $slow = @($lines | Where-Object { $_ -match 'fps avg ([\d.]+)' } | ForEach-Object { [double]([regex]::Match($_, 'fps avg ([\d.]+)').Groups[1].Value) } | Where-Object { $_ -lt 50 })
+        if (-not $online -and ($lines -match 'nn::err::ShowError: result 0x2ecb')) { & $tip 'The game showed error 2203-0023: Local Wireless got no answer from the lobby within 3 s. Check the internet connection (a VPN or an antivirus can block the game); if it keeps happening, tell the group (the lobby may be down).' 'Le jeu a affiché l''erreur 2203-0023 : Local Wireless n''a pas eu de réponse du lobby en 3 s. Vérifie la connexion internet (un VPN ou un antivirus peut bloquer le jeu) ; si ça continue, préviens le groupe (le lobby est peut-être en panne).' }
+        # the median frame time of each 300-frame window: one stall (loading, a 3 s wait) lowers the average, not the median
+        $slow = @($lines | Where-Object { $_ -match '^nvn_perf: frames .* median ([\d.]+)' } | ForEach-Object { [double]([regex]::Match($_, 'median ([\d.]+)').Groups[1].Value) } | Where-Object { $_ -gt 20 })
         if ($slow.Count -ge 3) { & $tip 'The game ran under 50 fps many times: close other programs, turn low spec mode on (menu 6); the first matches also prepare shaders.' 'Le jeu est souvent passé sous 50 fps : ferme les autres programmes, active le mode PC peu puissant (menu 6) ; les premières parties préparent aussi des shaders.' }
     } else { [void]$Script:Extra.Add('(no game log yet)') }
     if (-not $advice.Count) { & $tip 'Nothing obvious found: send this report to the group.' 'Rien d''évident trouvé : envoie ce rapport au groupe.' }
@@ -791,12 +820,14 @@ function Set-LowSpec {
     Set-Step 'Low spec' 'OK' "$(if ($on) { 'off' } else { 'on' })"
 }
 
-# Play SSBU.bat (scripts\run.py --play), rollback on. The game must still run 15 s after it appeared (the WindowSmash
+# Play SSBU.bat (scripts\run.py --play), rollback off (menu 8: on), online play on the public lobby. The game must still run 15 s after it appeared (the WindowSmash
 # kit's check); a failure's report holds the end of the newest build\logs\game_*.log (run.py's game log).
 function Start-Game {
     $play = Join-Path $Script:Repo 'Play SSBU.bat'
     if ($Script:Rollback) { if (Set-Rollback $true) { Say (L '  Rollback netcode: ON, EXPERIMENTAL (1-on-1 Local Wireless rooms where both players have it on; other fights as usual).' '  Rollback : ON, EXPÉRIMENTAL (rooms Local Wireless à 2 où les deux joueurs l''ont ; les autres combats comme d''habitude).') } }
     elseif (Set-Rollback $false) { Say (L '  Rollback netcode: OFF (the game''s own online netcode; menu 8 of the launcher starts with rollback).' '  Rollback : OFF (netcode d''origine du jeu ; l''option 8 du launcher lance avec le rollback).') }
+    $online = Set-OnlineLobby
+    if ($online) { Say (L "  Online play: back on the public lobby (it was '$online' in F1 > Experimental; a room code only works while that host's game is open). Use Local Wireless > Rooms list." "  Jeu en ligne : remis sur le lobby public (c'était '$online' dans F1 > Experimental ; un code de room ne marche que tant que le jeu de cet hôte est ouvert). Utilise Local Wireless > liste des rooms.") }
     $gameLog = { Get-ChildItem -LiteralPath (Join-Path (Get-BuildDir) 'logs') -Filter 'game_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1 | ForEach-Object { $_.FullName } }
     try {
         $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', "`"$play`"" -WorkingDirectory $Script:Repo -PassThru

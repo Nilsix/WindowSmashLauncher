@@ -102,6 +102,9 @@ Vulkan) avec un **rollback netcode** expérimental. Son launcher marche comme ce
 Par défaut (raccourci, option 2), le jeu utilise son **netcode d'origine** ; l'option 8 le lance **avec le rollback**. Il sert dans les rooms **Local Wireless à 2
 joueurs** qui l'ont tous les deux ; les rooms à plus de 2 joueurs et les combats locaux se jouent comme d'habitude.
 OpenSmash a son propre lobby : les joueurs WindowSmash et OpenSmash ne se voient pas, choisissez le même entre amis.
+À chaque lancement, le launcher remet le jeu en ligne sur ce lobby public : un mode « Join with a code » ou « Host a
+room » choisi dans F1 > Experimental ne marche que tant que le jeu de l'hôte est ouvert, sinon Local Wireless affiche
+l'erreur **2203-0023**.
 
 | Choix | Ce qu'il fait |
 | :--- | :--- |
