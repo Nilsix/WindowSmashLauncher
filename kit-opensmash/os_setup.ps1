@@ -13,21 +13,21 @@
 # OpenSmash's private Python (its scripts\bootstrap.ps1 -NoLaunch) -> the game files (inputs.json, shared with the
 # WindowSmash kit) -> its scripts\install.py --prepare-only (the unpacked game) -> the game program must be 13.0.5's (its
 # build id) -> install.py again (the build) -> shortcuts through the launcher (play mode checks the version at every
-# start) -> the game WITHOUT the rollback netcode (rollback = off written before every start; the owner's choice after
-# rollback kept a 2700X under 40 fps online, 2026-10-26). Menu 8 starts it with rollback (rollback = on).
+# start) -> the game with its own delay-based netcode, no rollback (rollback = off written before every start; the owner's choice after
+# rollback kept a 2700X under 40 fps online, 2026-10-26). Menu 3, just below, starts it with rollback (rollback = on).
 # After a version change the build repeats from the step OpenSmash's own self-update would repeat (scripts\update.py's
 # rebuild_advice on the changed files, passed with install.py's --reexec), counted from the oldest version not built yet
 # (opensmash-rebuild.txt), so an update stopped half way is finished at the next start.
-# Messages: English, or French when chosen (menu 7, kept in %LOCALAPPDATA%\WindowSmash-setup\lang.txt, the same file as
+# Messages: English, or French when chosen (menu 8, kept in %LOCALAPPDATA%\WindowSmash-setup\lang.txt, the same file as
 # the WindowSmash kit's): every message is written as L 'English' 'French'. The report and the log stay in English.
-# Modes (-Mode, the launcher's argument): install, play, diag, dlc (menu 4: add my DLC), unlock (menu 5: all fighters), lowspec (menu 6), play-rollback (menu 8; play-norollback = play);
+# Modes (-Mode, the launcher's argument): install, play (menu 2: delay-based netcode), play-rollback (menu 3; play-norollback = play), diag (menu 4), dlc (menu 5: add my DLC), unlock (menu 6: all fighters), lowspec (menu 7);
 # none: the menu.
 # Test-only environment: WS_STOP_AFTER=repo|revision|python|prepare, WS_NO_NOTEPAD, WS_REPORT_DIR, WS_INPUTS_JSON
 # (another inputs.json).
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.11 (2026-10-29)'
+$KitVersion = '1.12 (2026-10-30)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -84,7 +84,7 @@ function Hint([string]$code) {
         'E60' { L "OpenSmash's installer stopped: the end of its log is in the report. Start the launcher again: it carries on where it stopped." "L'installateur d'OpenSmash s'est arrêté : la fin de son log est dans le rapport. Relance le launcher : il reprend où il en était." }
         'E70' { L "The game did not start." "Le jeu ne s'est pas lancé." }
         'E80' { L "The fighters could not be unlocked: see the message above." "Les personnages n'ont pas pu être débloqués : voir le message au-dessus." }
-        'E81' { L "Close the game, then choose 5) again." "Ferme le jeu, puis choisis de nouveau 5)." }
+        'E81' { L "Close the game, then choose 6) again." "Ferme le jeu, puis choisis de nouveau 6)." }
         'E99' { L "Unexpected error of the script: send the report." "Erreur inattendue du script : envoie le rapport." }
         default { $null }
     }
@@ -367,7 +367,7 @@ function Ensure-Python {
 function Load-Inputs { if (Test-Path -LiteralPath $InputsJs) { try { return (Get-Content -LiteralPath $InputsJs -Raw -Encoding UTF8 | ConvertFrom-Json) } catch {} }; return $null }
 function Save-Inputs { $Script:Inputs | ConvertTo-Json | Set-Content -LiteralPath $InputsJs -Encoding UTF8 }
 
-# $quiet (after menu 4): the files of last time are reused without asking when they are all there.
+# $quiet (after menu 5): the files of last time are reused without asking when they are all there.
 function Ask-Inputs([bool]$quiet = $false) {
     Title (L 'Game files (yours, dumped from your console)' 'Fichiers du jeu (les tiens, dumpés de ta console)')
     $prev = Load-Inputs
@@ -421,7 +421,7 @@ function Get-DlcFiles {
     return @(Get-ChildItem -LiteralPath $Script:Inputs.dlc -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -eq '.nsp' } | ForEach-Object { $_.FullName })
 }
 
-# Menu 4: the folder of the DLC the player bought, dumped from their own Switch (.nsp files; the WindowSmash launcher's
+# Menu 5: the folder of the DLC the player bought, dumped from their own Switch (.nsp files; the WindowSmash launcher's
 # option 6 uses the same folder, kept in inputs.json). The install flow then runs: OpenSmash's installer (its step 7)
 # lists their add-on ids, read from the file names, in build\config\dlc.txt; the DLC fighters' data is in the game
 # update and the game reads only that list, so nothing is recompiled.
@@ -509,7 +509,7 @@ function Invoke-OsInstall([string[]]$extra, [string]$name) {
     return (Run-Shown $Script:Py ($argv + $extra) $name)
 }
 
-# Menu 5: every fighter of the base roster selectable in the player's own save (save_no 0-73; the DLC fighters are left
+# Menu 6: every fighter of the base roster selectable in the player's own save (save_no 0-73; the DLC fighters are left
 # to the game, which unlocks them from their add-on contents). The same edit as the WindowSmash launcher's option 4, on
 # the 13.0.5 save layout (system_data.bin, 0x5B4AF8 bytes): FLAGS at 0x53FF40, 8 bytes per fighter ([0] 1 = selectable,
 # [1..3] challenger state, [4] the order fighters were met), RECORDS at 0x54FEA8, the "joined the battle" milestone
@@ -756,7 +756,7 @@ function Test-Lobby([string]$server, [int]$secs = 30) {
     } catch { if ($res) { return $res }; return @{ ip = $ip; ms = -1 } } finally { $u.Close() }
 }
 
-# Menu 3, when the game lags or crashes: the PC (CPU, RAM, GPU and driver, the build folder's disk), the settings of
+# Menu 4, when the game lags or crashes: the PC (CPU, RAM, GPU and driver, the build folder's disk), the settings of
 # graphics.ini, the game's own crash and freeze reports (work\ssbu_native_crash.txt / _freeze.txt, a minidump beside them)
 # and the newest game log go into the report; what they point at is said as advice.
 function Diagnose-Game {
@@ -770,11 +770,11 @@ function Diagnose-Game {
     $Script:Info['Windows'] = "$($os.Caption) $($os.Version)"
     $Script:Info['CPU'] = "$($cpu.Name.Trim()) ($($cpu.NumberOfLogicalProcessors) threads)"
     $Script:Info['RAM'] = "{0:N1} GB, {1:N1} GB free now" -f $ram, $freeRam
-    if ($ram -lt 12) { & $tip "Only $([int]$ram) GB of RAM: turn low spec mode on (menu 6) and close other programs." "Seulement $([int]$ram) Go de RAM : active le mode PC peu puissant (menu 6) et ferme les autres programmes." }
+    if ($ram -lt 12) { & $tip "Only $([int]$ram) GB of RAM: turn low spec mode on (menu 7) and close other programs." "Seulement $([int]$ram) Go de RAM : active le mode PC peu puissant (menu 7) et ferme les autres programmes." }
     $gpus = @(Get-CimInstance Win32_VideoController)
     $i = 0
     foreach ($g in $gpus) { $i++; $Script:Info["GPU $i"] = "$($g.Name), driver $($g.DriverVersion) ($(if ($g.DriverDate) { $g.DriverDate.ToString('yyyy-MM-dd') }))" }
-    if (-not ($gpus | Where-Object { $_.Name -match 'NVIDIA|Radeon RX|Arc' })) { & $tip 'No dedicated graphics card found: turn low spec mode on (menu 6).' 'Pas de carte graphique dédiée trouvée : active le mode PC peu puissant (menu 6).' }
+    if (-not ($gpus | Where-Object { $_.Name -match 'NVIDIA|Radeon RX|Arc' })) { & $tip 'No dedicated graphics card found: turn low spec mode on (menu 7).' 'Pas de carte graphique dédiée trouvée : active le mode PC peu puissant (menu 7).' }
     $old = $gpus | Where-Object { $_.Name -notmatch 'Virtual|Parsec|Basic|Remote|Meta|Mirror' -and $_.DriverDate -and $_.DriverDate -lt (Get-Date).AddMonths(-12) }
     if ($old) { & $tip "The graphics driver is over a year old ($($old[0].Name)): install the newest one from NVIDIA / AMD / Intel." "Le pilote graphique a plus d'un an ($($old[0].Name)) : installe le dernier depuis le site NVIDIA / AMD / Intel." }
     try {
@@ -824,7 +824,7 @@ function Diagnose-Game {
         }
     }
     if ($blocked) {
-        if ($dpi) { & $tip "$($dpi -join ', ') (zapret / GoodbyeDPI) is running: it is not a VPN, the game goes straight through the internet provider. Test: stop it for a minute (close it, or stop its service) and run menu 3 again. If the lobby then keeps answering, zapret is the cause: turn its game filter off (UDP ports 1024-65535, in zapret's service.bat) or use a strategy without it. If it is still cut, the provider cuts it." "$($dpi -join ', ') (zapret / GoodbyeDPI) tourne : ce n'est pas un VPN, le jeu passe directement par le fournisseur internet. Test : arrête-le une minute (ferme-le, ou arrête son service) et relance l'option 3. Si le lobby répond alors sans coupure, c'est zapret : désactive son filtre jeux (ports UDP 1024-65535, dans le service.bat de zapret) ou prends une stratégie sans. Si ça coupe encore, c'est le fournisseur." }
+        if ($dpi) { & $tip "$($dpi -join ', ') (zapret / GoodbyeDPI) is running: it is not a VPN, the game goes straight through the internet provider. Test: stop it for a minute (close it, or stop its service) and run menu 4 again. If the lobby then keeps answering, zapret is the cause: turn its game filter off (UDP ports 1024-65535, in zapret's service.bat) or use a strategy without it. If it is still cut, the provider cuts it." "$($dpi -join ', ') (zapret / GoodbyeDPI) tourne : ce n'est pas un VPN, le jeu passe directement par le fournisseur internet. Test : arrête-le une minute (ferme-le, ou arrête son service) et relance l'option 4. Si le lobby répond alors sans coupure, c'est zapret : désactive son filtre jeux (ports UDP 1024-65535, dans le service.bat de zapret) ou prends une stratégie sans. Si ça coupe encore, c'est le fournisseur." }
         # the game speaks UDP only: a VPN must carry UDP, and a proxy app in system proxy mode carries only the TCP of the
         # programs that ask it (browsers); the game then goes around it, straight to a provider that may block the lobby
         if ($vpn) { & $tip "The lobby ($srv) $howEn through the VPN or tunnel ($($vpn[0])): the game needs UDP (port 39500). In the VPN app pick the TUN / full VPN mode with UDP on, or a server whose protocol carries UDP (AmneziaWG, WireGuard, Hysteria2, VLESS or Shadowsocks with UDP); if the VPN is optional where you live, test once with it off." "Le lobby ($srv) $howFr à travers le VPN ou tunnel ($($vpn[0])) : le jeu a besoin de l'UDP (port 39500). Dans l'appli VPN, choisis le mode TUN / VPN complet avec l'UDP activé, ou un serveur dont le protocole fait passer l'UDP (AmneziaWG, WireGuard, Hysteria2, VLESS ou Shadowsocks avec UDP) ; si le VPN n'est pas obligatoire chez toi, teste une fois sans." }
@@ -844,8 +844,8 @@ function Diagnose-Game {
             foreach ($x in (($t.Substring([math]::Max(0, $k)) -split "`r?`n") | Select-Object -First 40)) { [void]$Script:Extra.Add($x) }
             $hooks = @([regex]::Matches($t, '(?im)\b(medal-hook64|graphics-hook64|RTSSHooks64|DiscordHook64|overlay64|GameOverlayRenderer64|nvspcap64|fraps64)\.dll') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
             if ($hooks) { & $tip "Overlay or recording programs were inside the game ($($hooks -join ', ')): close Medal, OBS, RivaTuner, Discord overlay and the like, then try again." "Des programmes d'overlay ou d'enregistrement étaient dans le jeu ($($hooks -join ', ')) : ferme Medal, OBS, RivaTuner, l'overlay Discord, etc., puis réessaie." }
-            if ($t -match 'DEVICE_LOST|device lost|device loss') { & $tip 'The graphics card stopped answering (device lost): update the graphics driver, then try low spec mode (menu 6).' 'La carte graphique a cessé de répondre (device lost) : mets à jour le pilote graphique, puis essaie le mode PC peu puissant (menu 6).' }
-            elseif ($t -match 'out of memory|0xc0000017|allocation') { & $tip 'Out of memory: close other programs and turn low spec mode on (menu 6).' 'Mémoire insuffisante : ferme les autres programmes et active le mode PC peu puissant (menu 6).' }
+            if ($t -match 'DEVICE_LOST|device lost|device loss') { & $tip 'The graphics card stopped answering (device lost): update the graphics driver, then try low spec mode (menu 7).' 'La carte graphique a cessé de répondre (device lost) : mets à jour le pilote graphique, puis essaie le mode PC peu puissant (menu 7).' }
+            elseif ($t -match 'out of memory|0xc0000017|allocation') { & $tip 'Out of memory: close other programs and turn low spec mode on (menu 7).' 'Mémoire insuffisante : ferme les autres programmes et active le mode PC peu puissant (menu 7).' }
             elseif ($r -match 'crash') { & $tip "The game crashed ($r): send this report to the group." "Le jeu a planté ($r) : envoie ce rapport au groupe." }
         }
     }
@@ -863,7 +863,7 @@ function Diagnose-Game {
             $gname = $dev -replace '^nvn_vk: using device \d+: ', '' -replace ' \(loader.*', ''
             $Script:Info['GPU used by the game'] = $gname
             # older or small cards (4 GB of video memory or less) run short with every shader and the full resolution
-            if ($gname -match 'GTX (9\d\d|10[0-6]\d|1650)|RX (4\d0|5[0-6]0)|MX\d{3}|Vega|Radeon\(TM\) Graphics|Intel') { & $tip "The game runs on a modest GPU ($gname): turn low spec mode on (menu 6)." "Le jeu tourne sur une carte graphique modeste ($gname) : active le mode PC peu puissant (menu 6)." }
+            if ($gname -match 'GTX (9\d\d|10[0-6]\d|1650)|RX (4\d0|5[0-6]0)|MX\d{3}|Vega|Radeon\(TM\) Graphics|Intel') { & $tip "The game runs on a modest GPU ($gname): turn low spec mode on (menu 7)." "Le jeu tourne sur une carte graphique modeste ($gname) : active le mode PC peu puissant (menu 7)." }
         }
         [void]$Script:Extra.Add(''); [void]$Script:Extra.Add("--- $($log.Name): problems and frame times")
         foreach ($x in ($lines | Where-Object { $_ -match 'error|fail|lost|out of memory|watchdog|freeze|nvn_perf: frames|fps avg' } | Select-Object -Last 40)) { [void]$Script:Extra.Add((& $clean $x)) }
@@ -878,7 +878,7 @@ function Diagnose-Game {
         }
         # the median frame time of each 300-frame window: one stall (loading, a 3 s wait) lowers the average, not the median
         $slow = @($lines | Where-Object { $_ -match '^nvn_perf: frames .* median ([\d.]+)' } | ForEach-Object { [double]([regex]::Match($_, 'median ([\d.]+)').Groups[1].Value) } | Where-Object { $_ -gt 20 })
-        if ($slow.Count -ge 3) { & $tip 'The game ran under 50 fps many times: close other programs, turn low spec mode on (menu 6); the first matches also prepare shaders.' 'Le jeu est souvent passé sous 50 fps : ferme les autres programmes, active le mode PC peu puissant (menu 6) ; les premières parties préparent aussi des shaders.' }
+        if ($slow.Count -ge 3) { & $tip 'The game ran under 50 fps many times: close other programs, turn low spec mode on (menu 7); the first matches also prepare shaders.' 'Le jeu est souvent passé sous 50 fps : ferme les autres programmes, active le mode PC peu puissant (menu 7) ; les premières parties préparent aussi des shaders.' }
     } else { [void]$Script:Extra.Add('(no game log yet)') }
     if (-not $advice.Count) { & $tip 'Nothing obvious found: send this report to the group.' 'Rien d''évident trouvé : envoie ce rapport au groupe.' }
     [void]$Script:Extra.Insert(0, '--- Advice'); $k = 1
@@ -903,7 +903,7 @@ function Set-IniKey([string]$key, [string]$v) {
     } catch { Warn (L "W72 $key not written ($($_.Exception.Message))" "W72 $key non écrit ($($_.Exception.Message))"); return $false }
 }
 
-# Menu 6: low spec mode, for a weak or integrated GPU / little memory, switched on or off. On: OpenSmash's own "low"
+# Menu 7: low spec mode, for a weak or integrated GPU / little memory, switched on or off. On: OpenSmash's own "low"
 # profile (internal resolution 0.5, the game's texture filtering, vsync by the clock) and the shaders of a fighter or
 # stage loaded at its loading screen instead of all at the start (less memory). Off: every key as written, resolution 1.0,
 # all shaders at the start only with 24 GB of RAM or more (they take about 10 GB).
@@ -920,12 +920,12 @@ function Set-LowSpec {
     Set-Step 'Low spec' 'OK' "$(if ($on) { 'off' } else { 'on' })"
 }
 
-# Play SSBU.bat (scripts\run.py --play), rollback off (menu 8: on), online play on the public lobby. The game must still run 15 s after it appeared (the WindowSmash
+# Play SSBU.bat (scripts\run.py --play), delay-based netcode (rollback off; menu 3: on), online play on the public lobby. The game must still run 15 s after it appeared (the WindowSmash
 # kit's check); a failure's report holds the end of the newest build\logs\game_*.log (run.py's game log).
 function Start-Game {
     $play = Join-Path $Script:Repo 'Play SSBU.bat'
     if ($Script:Rollback) { if (Set-Rollback $true) { Say (L '  Rollback netcode: ON, EXPERIMENTAL (1-on-1 Local Wireless rooms where both players have it on; other fights as usual).' '  Rollback : ON, EXPÉRIMENTAL (rooms Local Wireless à 2 où les deux joueurs l''ont ; les autres combats comme d''habitude).') } }
-    elseif (Set-Rollback $false) { Say (L '  Rollback netcode: OFF (the game''s own online netcode; menu 8 of the launcher starts with rollback).' '  Rollback : OFF (netcode d''origine du jeu ; l''option 8 du launcher lance avec le rollback).') }
+    elseif (Set-Rollback $false) { Say (L '  Netcode: delay-based (the game''s own, no rollback; option 3 of the launcher starts with rollback).' '  Netcode : delay-based (celui du jeu d''origine, sans rollback ; l''option 3 du launcher lance avec le rollback).') }
     $online = Set-OnlineLobby
     if ($online) { Say (L "  Online play: back on the public lobby (it was '$online' in F1 > Experimental; a room code only works while that host's game is open). Use Local Wireless > Rooms list." "  Jeu en ligne : remis sur le lobby public (c'était '$online' dans F1 > Experimental ; un code de room ne marche que tant que le jeu de cet hôte est ouvert). Utilise Local Wireless > liste des rooms.") }
     $gameLog = { Get-ChildItem -LiteralPath (Join-Path (Get-BuildDir) 'logs') -Filter 'game_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1 | ForEach-Object { $_.FullName } }
@@ -958,16 +958,16 @@ try {
     while (-not $Mode) {
         Write-Host ''
         Write-Host (L '  1) Install / update' '  1) Installer / mettre à jour')
-        Write-Host (L '  2) Start the game' '  2) Lancer le jeu')
-        Write-Host (L '  3) Diagnosis only (makes the report, installs nothing)' '  3) Diagnostic seulement (crée le rapport sans rien installer)')
-        Write-Host (L '  4) Add my DLC (bought, dumped from your Switch)' '  4) Ajouter mes DLC (achetés, dumpés de ta Switch)')
-        Write-Host (L '  5) Unlock all the fighters (after a first start of the game, game closed)' '  5) Débloquer tous les personnages (après un premier lancement du jeu, jeu fermé)')
-        Write-Host (L '  6) Low spec mode on / off (weak or integrated GPU)' '  6) Mode PC peu puissant on / off (carte graphique faible ou intégrée)')
-        Write-Host (L '  7) Français (passer le launcher en français)' '  7) English (switch the launcher to English)')
-        Write-Host (L '  8) Start the game WITH rollback (experimental, needs a strong CPU; both players on)' '  8) Lancer le jeu AVEC rollback (expérimental, demande un bon processeur ; les deux joueurs)')
+        Write-Host (L '  2) Start the game (delay-based netcode)' '  2) Lancer le jeu (netcode delay-based)')
+        Write-Host (L '  3) Start the game WITH rollback (experimental, needs a strong CPU; both players on)' '  3) Lancer le jeu AVEC rollback (expérimental, demande un bon processeur ; les deux joueurs)')
+        Write-Host (L '  4) Diagnosis only (makes the report, installs nothing)' '  4) Diagnostic seulement (crée le rapport sans rien installer)')
+        Write-Host (L '  5) Add my DLC (bought, dumped from your Switch)' '  5) Ajouter mes DLC (achetés, dumpés de ta Switch)')
+        Write-Host (L '  6) Unlock all the fighters (after a first start of the game, game closed)' '  6) Débloquer tous les personnages (après un premier lancement du jeu, jeu fermé)')
+        Write-Host (L '  7) Low spec mode on / off (weak or integrated GPU)' '  7) Mode PC peu puissant on / off (carte graphique faible ou intégrée)')
+        Write-Host (L '  8) Français (passer le launcher en français)' '  8) English (switch the launcher to English)')
         $m = "$(Read-Host (L '  Your choice [1]' '  Ton choix [1]'))".Trim()
-        if ($m -eq '7') { Set-Language $(if ($Script:Lang -eq 'fr') { 'en' } else { 'fr' }); Log "language $Script:Lang"; & $header; continue }
-        $Mode = @{ '2' = 'play'; '3' = 'diag'; '4' = 'dlc'; '5' = 'unlock'; '6' = 'lowspec'; '8' = 'play-rollback' }[$m]
+        if ($m -eq '8') { Set-Language $(if ($Script:Lang -eq 'fr') { 'en' } else { 'fr' }); Log "language $Script:Lang"; & $header; continue }
+        $Mode = @{ '2' = 'play'; '3' = 'play-rollback'; '4' = 'diag'; '5' = 'dlc'; '6' = 'unlock'; '7' = 'lowspec' }[$m]
         if (-not $Mode) { $Mode = 'install' }
     }
     $quietInputs = $false
@@ -1017,7 +1017,7 @@ try {
     Set-Shortcuts
     Write-Report 'OK'
     Say (L "  To play: the 'Smash Ultimate (OpenSmash)' shortcut (it checks the version at every start)." "  Pour jouer : le raccourci 'Smash Ultimate (OpenSmash)' (il vérifie la version à chaque lancement).")
-    Say (L '  Rollback (experimental): launcher option 8, both players; it plays 1-on-1 Local Wireless rooms.' '  Rollback (expérimental) : option 8 du launcher, pour les deux joueurs ; il sert dans les rooms Local Wireless à 2.')
+    Say (L '  Rollback (experimental): launcher option 3, both players; it plays 1-on-1 Local Wireless rooms.' '  Rollback (expérimental) : option 3 du launcher, pour les deux joueurs ; il sert dans les rooms Local Wireless à 2.')
     Say (L '  In the game: F1 = settings.' '  Dans le jeu : F1 = réglages.')
     Say (L '  Do not use OpenSmash''s own "Install SSBU.bat": it would update OpenSmash past your friends'' version.' '  N''utilise pas le "Install SSBU.bat" d''OpenSmash : il mettrait OpenSmash à jour au-delà de la version de tes amis.')
     if (Ask-YesNo (L '  Start the game now?' '  Je lance le jeu maintenant ?')) { Start-Game }
