@@ -27,7 +27,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.12 (2026-10-30)'
+$KitVersion = '1.13 (2026-11-02)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -367,11 +367,34 @@ function Ensure-Python {
 function Load-Inputs { if (Test-Path -LiteralPath $InputsJs) { try { return (Get-Content -LiteralPath $InputsJs -Raw -Encoding UTF8 | ConvertFrom-Json) } catch {} }; return $null }
 function Save-Inputs { $Script:Inputs | ConvertTo-Json | Set-Content -LiteralPath $InputsJs -Encoding UTF8 }
 
+# The update given as the base game: its file name says so ([UPD], title 01006A800016E800), or its .nsp (PFS0) holds the
+# update's ticket. Its RomFS is only a patch: install.py unpacked a 7.1 GB data.arc instead of 17 GB, then stopped with
+# "data.arc is incomplete ... a full disk" (a friend chose the 13.0.5 .nsp for both, 2026-11-02).
+function Test-UpdateFile([string]$path) {
+    if ([IO.Path]::GetFileName($path) -match '01006A800016E800|\[UPD\]') { return $true }
+    try {
+        $fs = [IO.File]::OpenRead($path)
+        try {
+            $h = New-Object byte[] 16
+            if ($fs.Read($h, 0, 16) -ne 16 -or [Text.Encoding]::ASCII.GetString($h, 0, 4) -ne 'PFS0') { return $false }   # (an .xci: never the update alone)
+            $n = [BitConverter]::ToInt32($h, 4); $names = [BitConverter]::ToInt32($h, 8)
+            if ($n -le 0 -or $n -gt 4096 -or $names -le 0 -or $names -gt 1MB) { return $false }
+            $rest = New-Object byte[] (24 * $n + $names)
+            [void]$fs.Read($rest, 0, $rest.Length)
+            return [Text.Encoding]::ASCII.GetString($rest, 24 * $n, $names) -match '01006a800016e800'
+        } finally { $fs.Dispose() }
+    } catch { return $false }
+}
+
 # $quiet (after menu 5): the files of last time are reused without asking when they are all there.
 function Ask-Inputs([bool]$quiet = $false) {
     Title (L 'Game files (yours, dumped from your console)' 'Fichiers du jeu (les tiens, dumpés de ta console)')
     $prev = Load-Inputs
     $have = { param($p) $p -and (Test-Path -LiteralPath $p) }
+    if ($prev -and (& $have $prev.base) -and (Test-UpdateFile $prev.base)) {
+        Warn (L "W41 the base game chosen last time is the $EXPECT_VERSION update ($($prev.base)): choose the files again, the base game 1.0.0 too" "W41 le jeu de base choisi la dernière fois est la mise à jour $EXPECT_VERSION ($($prev.base)) : choisis de nouveau les fichiers, avec le jeu de base 1.0.0")
+        $prev.base = $null
+    }
     if ($prev -and (& $have $prev.base) -and (& $have $prev.prodkeys)) {
         # (an update of another version, found by this kit or checked by the WindowSmash kit, is not reused)
         $upd = if ((& $have $prev.update) -and (-not $prev.update_version -or $prev.update_version -eq $EXPECT_VERSION)) { $prev.update } else { $null }
@@ -402,8 +425,12 @@ function Ask-Inputs([bool]$quiet = $false) {
     $k = Pick-File (L '1/3 - Choose your prod.keys file' '1/3 - Choisis ton fichier prod.keys') (L 'Keys (prod.keys)|prod.keys;*.keys|All files|*.*' 'Clés (prod.keys)|prod.keys;*.keys|Tous les fichiers|*.*') ''
     if (-not $k) { Fail 'E40' (L 'prod.keys not chosen' 'prod.keys non choisi') }
     $Script:Inputs.prodkeys = $k
-    $b = Pick-File (L '2/3 - Choose the Smash Ultimate BASE GAME (version 1.0.0, .xci or .nsp)' '2/3 - Choisis le JEU DE BASE de Smash Ultimate (version 1.0.0, .xci ou .nsp)') (L 'Switch game (*.xci;*.nsp)|*.xci;*.nsp|All files|*.*' 'Jeu Switch (*.xci;*.nsp)|*.xci;*.nsp|Tous les fichiers|*.*') $k
-    if (-not $b) { Fail 'E40' (L 'base game not chosen' 'jeu de base non choisi') }
+    while ($true) {
+        $b = Pick-File (L '2/3 - Choose the Smash Ultimate BASE GAME (version 1.0.0, .xci or .nsp)' '2/3 - Choisis le JEU DE BASE de Smash Ultimate (version 1.0.0, .xci ou .nsp)') (L 'Switch game (*.xci;*.nsp)|*.xci;*.nsp|All files|*.*' 'Jeu Switch (*.xci;*.nsp)|*.xci;*.nsp|Tous les fichiers|*.*') $k
+        if (-not $b) { Fail 'E40' (L 'base game not chosen' 'jeu de base non choisi') }
+        if (-not (Test-UpdateFile $b)) { break }
+        Say (L "  This file is the $EXPECT_VERSION update, not the base game: choose the game itself (version 1.0.0, title 01006A800016E000); the update comes next." "  Ce fichier est la mise à jour $EXPECT_VERSION, pas le jeu de base : choisis le jeu lui-même (version 1.0.0, titre 01006A800016E000) ; la mise à jour vient juste après.")
+    }
     $Script:Inputs.base = $b
     $u = Pick-File (L "3/3 - Choose Smash Ultimate's $EXPECT_VERSION UPDATE (.nsp)" "3/3 - Choisis la MISE À JOUR $EXPECT_VERSION de Smash Ultimate (.nsp)") (L 'Update (*.nsp)|*.nsp|All files|*.*' 'Mise à jour (*.nsp)|*.nsp|Tous les fichiers|*.*') $b
     if (-not $u) { Fail 'E40' (L 'update not chosen' 'mise à jour non choisie') }
