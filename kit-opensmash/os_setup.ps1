@@ -27,7 +27,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '1.13 (2026-11-02)'
+$KitVersion = '1.14 (2026-11-03)'
 
 # ---- the version everyone plays --------------------------------------------------------------------------------------
 $OS_GIT_URL = 'https://github.com/OpenSmash-Ultimate/ssbu-recomp.git'
@@ -543,29 +543,34 @@ function Invoke-OsInstall([string[]]$extra, [string]$name) {
 # (bits 0-11 year, 12-15 month, 16-20 day, 21-25 hour, 26-31 minute, 32-37 second, 48-55 how = 3, 63 set). OpenSmash keeps
 # the committed save in <build>\saves\save; a pending save.commit is applied by the game at its next start, over any
 # edit, and a running game rewrites the save: both are refused. A copy goes to <build>\save_backups first.
-function Unlock-Fighters {
-    Title (L 'Unlock all the fighters' 'Débloquer tous les personnages')
-    if (-not (Find-Repo $false)) { Fail 'E80' (L 'OpenSmash is not installed yet: choose 1) Install first' 'OpenSmash n''est pas encore installé : choisis d''abord 1) Installer') }
+# $auto (the owner's wish, 2026-11-03: every base fighter from the install on): run by the install's end and before every
+# start; a reason not to edit is only logged and the next start tries again. The game makes its save at its first start,
+# so a new install gets them when that first game closes (Start-Game waits for it) or else at the next start.
+function Unlock-Fighters([bool]$auto = $false) {
+    if (-not $auto) {
+        Title (L 'Unlock all the fighters' 'Débloquer tous les personnages')
+        if (-not (Find-Repo $false)) { Fail 'E80' (L 'OpenSmash is not installed yet: choose 1) Install first' 'OpenSmash n''est pas encore installé : choisis d''abord 1) Installer') }
+    }
     $v = Get-MainVersion (Join-Path (Get-BuildDir) 'dump\exefs\main')
-    if ($v -ne '13.0.5') { Fail 'E80' (L "the game is $v : this save layout is known for 13.0.5 only, nothing is changed" "le jeu est en $v : cette sauvegarde n'est connue qu'en 13.0.5, rien n'est changé") }
     $saves = Join-Path (Get-BuildDir) 'saves'
     $save = Join-Path $saves 'save\save_data\system_data.bin'
-    if (-not (Test-Path -LiteralPath $save)) { Fail 'E80' (L 'no save yet: start the game once up to the main menu, close it, then try again' 'pas encore de sauvegarde : lance le jeu une fois jusqu''au menu principal, ferme-le, puis recommence') }
-    if (Get-Process ssbu_native -ErrorAction SilentlyContinue) { Fail 'E81' (L 'the game is running: close it first (it rewrites its save when it quits)' 'le jeu est lancé : ferme-le d''abord (il réécrit sa sauvegarde en quittant)') }
-    if (Test-Path -LiteralPath (Join-Path $saves 'save.commit')) { Fail 'E81' (L 'the game left a save write to finish: start it once up to the main menu, close it, then try again' 'le jeu a laissé une écriture de sauvegarde à finir : lance-le une fois jusqu''au menu principal, ferme-le, puis recommence') }
+    $no = if ($v -ne '13.0.5') { 'E80', "the game is $v : this save layout is known for 13.0.5 only, nothing is changed", "le jeu est en $v : cette sauvegarde n'est connue qu'en 13.0.5, rien n'est changé" }
+          elseif (-not (Test-Path -LiteralPath $save)) { 'E80', 'no save yet: start the game once up to the main menu, close it, then try again', 'pas encore de sauvegarde : lance le jeu une fois jusqu''au menu principal, ferme-le, puis recommence' }
+          elseif (Get-Process ssbu_native -ErrorAction SilentlyContinue) { 'E81', 'the game is running: close it first (it rewrites its save when it quits)', 'le jeu est lancé : ferme-le d''abord (il réécrit sa sauvegarde en quittant)' }
+          elseif (Test-Path -LiteralPath (Join-Path $saves 'save.commit')) { 'E81', 'the game left a save write to finish: start it once up to the main menu, close it, then try again', 'le jeu a laissé une écriture de sauvegarde à finir : lance-le une fois jusqu''au menu principal, ferme-le, puis recommence' }
+    if ($no) { if ($auto) { Log "unlock skipped: $($no[1])"; return }; Fail $no[0] (L $no[1] $no[2]) }
     $SIZE = 0x5B4AF8; $FLAGS = 0x53FF40; $REC = 0x54FEA8; $count = 74; $starters = 0, 1, 2, 3, 5, 6, 7, 8
     $d = [IO.File]::ReadAllBytes($save)
-    $odd = { Fail 'E80' (L 'this save does not look as expected: nothing is changed' 'cette sauvegarde n''a pas la forme attendue : rien n''est changé') }
-    if ($d.Length -ne $SIZE -or [BitConverter]::ToUInt32($d, 0) -ne $SIZE) { & $odd }
-    foreach ($n in $starters) { if ($d[$FLAGS + 8 * $n] -ne 1) { & $odd } }
+    $fine = $d.Length -eq $SIZE -and [BitConverter]::ToUInt32($d, 0) -eq $SIZE
+    foreach ($n in $starters) { if ($fine -and $d[$FLAGS + 8 * $n] -ne 1) { $fine = $false } }
     $order = 0
-    for ($n = 0; $n -lt $count; $n++) {
+    for ($n = 0; $fine -and $n -lt $count; $n++) {
         $f = $FLAGS + 8 * $n
-        if ($d[$f] -gt 1 -or $d[$f + 5] -or $d[$f + 6] -or $d[$f + 7]) { & $odd }
         $r = [BitConverter]::ToUInt64($d, $REC + 8 * $n)
-        if ($r -and -not ($r -shr 63)) { & $odd }
+        if ($d[$f] -gt 1 -or $d[$f + 5] -or $d[$f + 6] -or $d[$f + 7] -or ($r -and -not ($r -shr 63))) { $fine = $false }
         if ($d[$f + 4] -gt $order) { $order = $d[$f + 4] }
     }
+    if (-not $fine) { if ($auto) { Log 'unlock skipped: the save does not look as expected'; return }; Fail 'E80' (L 'this save does not look as expected: nothing is changed' 'cette sauvegarde n''a pas la forme attendue : rien n''est changé') }
     $t = Get-Date
     [uint64]$joined = [uint64]$t.Year -bor ([uint64]$t.Month -shl 12) -bor ([uint64]$t.Day -shl 16) -bor ([uint64]$t.Hour -shl 21) -bor
                    ([uint64]$t.Minute -shl 26) -bor ([uint64]$t.Second -shl 32) -bor ([uint64]3 -shl 48) -bor ([uint64]1 -shl 63)
@@ -578,7 +583,11 @@ function Unlock-Fighters {
         if (-not [BitConverter]::ToUInt64($d, $REC + 8 * $n)) { [BitConverter]::GetBytes($joined).CopyTo($d, $REC + 8 * $n) }
         $added++
     }
-    if (-not $added) { Ok (L 'every fighter is already unlocked' 'tous les personnages sont déjà débloqués'); Set-Step 'Unlock' 'OK' 'nothing to do'; return }
+    if (-not $added) {
+        if ($auto) { Log 'unlock: every fighter is already unlocked' }
+        else { Ok (L 'every fighter is already unlocked' 'tous les personnages sont déjà débloqués'); Set-Step 'Unlock' 'OK' 'nothing to do' }
+        return
+    }
     $bk = Join-Path (Get-BuildDir) 'save_backups'
     New-Item -ItemType Directory -Force $bk | Out-Null
     $copy = Join-Path $bk ('system_data.bin.before-unlock-' + (Get-Date -Format 'yyyyMMdd_HHmmss'))
@@ -948,9 +957,12 @@ function Set-LowSpec {
 }
 
 # Play SSBU.bat (scripts\run.py --play), delay-based netcode (rollback off; menu 3: on), online play on the public lobby. The game must still run 15 s after it appeared (the WindowSmash
-# kit's check); a failure's report holds the end of the newest build\logs\game_*.log (run.py's game log).
+# kit's check); a failure's report holds the end of the newest build\logs\game_*.log (run.py's game log). Every base
+# fighter is unlocked first; at the first start (no save yet) the launcher waits for the game to close to do it.
 function Start-Game {
     $play = Join-Path $Script:Repo 'Play SSBU.bat'
+    $first = -not (Test-Path -LiteralPath (Join-Path (Get-BuildDir) 'saves\save\save_data\system_data.bin'))
+    if (-not $first) { Unlock-Fighters $true }
     if ($Script:Rollback) { if (Set-Rollback $true) { Say (L '  Rollback netcode: ON, EXPERIMENTAL (1-on-1 Local Wireless rooms where both players have it on; other fights as usual).' '  Rollback : ON, EXPÉRIMENTAL (rooms Local Wireless à 2 où les deux joueurs l''ont ; les autres combats comme d''habitude).') } }
     elseif (Set-Rollback $false) { Say (L '  Netcode: delay-based (the game''s own, no rollback; option 3 of the launcher starts with rollback).' '  Netcode : delay-based (celui du jeu d''origine, sans rollback ; l''option 3 du launcher lance avec le rollback).') }
     $online = Set-OnlineLobby
@@ -969,6 +981,12 @@ function Start-Game {
         if (-not (Get-Process ssbu_native -ErrorAction SilentlyContinue)) { Fail 'E70' (L 'the game closed at once' 'le jeu s''est fermé tout de suite') (& $gameLog) }
         Ok (L 'game started (F1 in the game: settings)' 'jeu lancé (F1 dans le jeu : réglages)')
     } catch { Fail 'E70' "$($_.Exception.Message)" }
+    if ($first) {
+        Say (L '  First start: leave this window open. When you close the game, the launcher unlocks every fighter (DLC aside) for the next start.' '  Premier lancement : laisse cette fenêtre ouverte. Quand tu fermes le jeu, le launcher débloque tous les personnages (hors DLC) pour le prochain lancement.')
+        while (Get-Process ssbu_native -ErrorAction SilentlyContinue) { Start-Sleep -Seconds 2 }
+        Start-Sleep -Seconds 1
+        Unlock-Fighters $true
+    }
 }
 
 # ---- main -----------------------------------------------------------------------------------------------------------
@@ -989,7 +1007,7 @@ try {
         Write-Host (L '  3) Start the game WITH rollback (experimental, needs a strong CPU; both players on)' '  3) Lancer le jeu AVEC rollback (expérimental, demande un bon processeur ; les deux joueurs)')
         Write-Host (L '  4) Diagnosis only (makes the report, installs nothing)' '  4) Diagnostic seulement (crée le rapport sans rien installer)')
         Write-Host (L '  5) Add my DLC (bought, dumped from your Switch)' '  5) Ajouter mes DLC (achetés, dumpés de ta Switch)')
-        Write-Host (L '  6) Unlock all the fighters (after a first start of the game, game closed)' '  6) Débloquer tous les personnages (après un premier lancement du jeu, jeu fermé)')
+        Write-Host (L '  6) Unlock all the fighters now (the launcher also does it by itself)' '  6) Débloquer tous les personnages maintenant (le launcher le fait aussi tout seul)')
         Write-Host (L '  7) Low spec mode on / off (weak or integrated GPU)' '  7) Mode PC peu puissant on / off (carte graphique faible ou intégrée)')
         Write-Host (L '  8) Français (passer le launcher en français)' '  8) English (switch the launcher to English)')
         $m = "$(Read-Host (L '  Your choice [1]' '  Ton choix [1]'))".Trim()
@@ -1040,10 +1058,12 @@ try {
     Stop-Test 'python'
     Ask-Inputs $quietInputs
     Install-Game
+    Unlock-Fighters $true      # (a save of an earlier install; a new one gets them at its first start's end, see Start-Game)
     Title (L 'Done' 'Terminé')
     Set-Shortcuts
     Write-Report 'OK'
     Say (L "  To play: the 'Smash Ultimate (OpenSmash)' shortcut (it checks the version at every start)." "  Pour jouer : le raccourci 'Smash Ultimate (OpenSmash)' (il vérifie la version à chaque lancement).")
+    Say (L '  Every fighter (DLC aside) is unlocked by the launcher: from the end of the first game (leave the launcher window open until you close it).' '  Tous les personnages (hors DLC) sont débloqués par le launcher : dès la fin de la première partie (laisse la fenêtre du launcher ouverte jusqu''à ce que tu fermes le jeu).')
     Say (L '  Rollback (experimental): launcher option 3, both players; it plays 1-on-1 Local Wireless rooms.' '  Rollback (expérimental) : option 3 du launcher, pour les deux joueurs ; il sert dans les rooms Local Wireless à 2.')
     Say (L '  In the game: F1 = settings.' '  Dans le jeu : F1 = réglages.')
     Say (L '  Do not use OpenSmash''s own "Install SSBU.bat": it would update OpenSmash past your friends'' version.' '  N''utilise pas le "Install SSBU.bat" d''OpenSmash : il mettrait OpenSmash à jour au-delà de la version de tes amis.')
