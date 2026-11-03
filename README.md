@@ -113,7 +113,7 @@ l'erreur **2203-0023**.
 | 3) Lancer le jeu avec rollback | Expérimental, demande un bon processeur (un Ryzen 2700X tombait sous 40 fps) ; les deux joueurs doivent le lancer ainsi. |
 | 4) Diagnostic | Si le jeu rame, plante ou ne trouve pas le lobby : examine le PC (RAM, carte graphique et pilote, disque), les réglages, la connexion au lobby (DNS, réponse en UDP, VPN actif), les rapports de plantage du jeu et son dernier log, donne des conseils (pilote, overlays comme Medal / OBS, disque lent, mode PC peu puissant) et crée `OpenSmash-setup-report.txt` sur le Bureau, à envoyer au groupe. |
 | 5) Ajouter mes DLC | Les DLC que tu as achetés, dumpés de ta Switch (dossier de fichiers `.nsp`, noms d'origine) : même dossier que l'option 6 du launcher WindowSmash. Pas de recompilation. En ligne, ayez les mêmes DLC. |
-| 6) Débloquer tous les personnages | Les 74 personnages de base dans ta sauvegarde (les DLC restent au jeu). Après un premier lancement du jeu, jeu fermé ; une copie de la sauvegarde d'avant est gardée dans `build\save_backups`. |
+| 6) Débloquer tous les personnages | Le launcher le fait déjà tout seul : à la fin de l'installation, quand tu fermes le jeu après le premier lancement (laisse sa fenêtre ouverte), puis avant chaque lancement. Ça débloque les 74 personnages de base dans ta sauvegarde (les DLC restent au jeu). L'option le fait tout de suite, jeu fermé ; une copie de la sauvegarde d'avant est gardée dans `build\save_backups`. |
 | 7) Mode PC peu puissant | On / off : résolution interne réduite de moitié et shaders chargés au fil des chargements (moins de mémoire), pour une carte graphique faible ou intégrée. |
 | 8) Français / English | Même réglage de langue que le launcher WindowSmash. |
 
