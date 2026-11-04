@@ -353,8 +353,8 @@ function Find-Repo([bool]$allowClone) {
             $ws = Get-WsRepo       # (OpenSmash Ultimate's folder is a git checkout of its own: nothing else goes inside)
             if (Test-Under $t $ws) { Warn (L "W13 $t is inside OpenSmash Ultimate's folder ($ws): choose another folder" "W13 $t est dans le dossier d'OpenSmash Ultimate ($ws) : choisis un autre dossier"); continue }
             if (Test-RepoDir $t) { $Script:Repo = $t; break }
-            if ((Test-Path -LiteralPath $t) -and (Get-ChildItem -LiteralPath $t -Force | Select-Object -First 1)) {
-                $t = Join-Path $t 'OpenSmash'                         # (a folder with other things in it: OpenSmash goes inside)
+            if ((Test-Path -LiteralPath $t) -and (([IO.Path]::GetPathRoot($t) -eq $t) -or (Get-ChildItem -LiteralPath $t -Force | Select-Object -First 1))) {
+                $t = [IO.Path]::Combine($t, 'OpenSmash')              # (a disk, or a folder with other things in it: OpenSmash goes inside)
                 if (Test-Under $t $ws) { Warn (L "W13 $t is inside OpenSmash Ultimate's folder ($ws): choose another folder" "W13 $t est dans le dossier d'OpenSmash Ultimate ($ws) : choisis un autre dossier"); continue }
                 if (Test-RepoDir $t) { $Script:Repo = $t; break }
                 if ((Test-Path -LiteralPath $t) -and (Get-ChildItem -LiteralPath $t -Force | Select-Object -First 1)) {
@@ -363,7 +363,10 @@ function Find-Repo([bool]$allowClone) {
             }
             try { $free = (New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($t))).AvailableFreeSpace / 1GB } catch { Warn (L "W13 no disk found for $t" "W13 disque introuvable pour $t"); continue }
             if ($free -lt $NEED_GB) { Warn ((L "W22 only {0:N0} GB free on {1}: choose another disk (OpenSmash Ultimate stays where it is)" "W22 seulement {0:N0} Go libres sur {1} : choisis un autre disque (OpenSmash Ultimate reste où il est)") -f $free, [IO.Path]::GetPathRoot($t)); continue }
-            New-Item -ItemType Directory -Force (Split-Path $t -Parent) | Out-Null
+            $parent = [IO.Path]::GetDirectoryName($t)      # (D:\OpenSmash: D:\, which New-Item -Force cannot "create" in PowerShell 5.1)
+            if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+                try { New-Item -ItemType Directory -Force $parent -ErrorAction Stop | Out-Null } catch { Warn (L "W13 $parent cannot be made ($($_.Exception.Message)): choose another folder" "W13 impossible de créer $parent ($($_.Exception.Message)) : choisis un autre dossier"); continue }
+            }
             Say (L "  Cloning OpenSmash into $t ..." "  Clonage d'OpenSmash dans $t ...")
             $out = @(Run-Native { & $Script:Git clone $OS_GIT_URL $t 2>&1 })
             if ($LASTEXITCODE -ne 0 -or -not (Test-RepoDir $t)) { Set-Step 'Folder' 'FAILED' 'git clone'; Fail 'E13' "git clone $(L 'failed' 'a échoué') : $(Get-GitError $out)" }

@@ -15,6 +15,8 @@
 # Kit 4.4: a dual boot. OpenSmash (ssbu-recomp, pinned at its last commit) is back beside OpenSmash Ultimate as menu 8 and
 # the os-* modes, run by kit-opensmash\os_kit.ps1 (kit-opensmash 1.14 with the launcher's new names) in a PowerShell of
 # its own; an OpenSmash install is no longer offered for deletion, and its old play shortcut starts it again (os-play).
+# Kit 4.4.1: an install folder directly under a drive root (D:\OpenSmash, or Browse to D:\) no longer stops with E99
+# (New-Item -Force on a root throws in PowerShell 5.1).
 # This file must stay UTF-8 with a BOM (Windows PowerShell 5.1 reads a BOM-less file as ANSI).
 # A complete installer: it installs what is missing (Git, Python 3.14, Visual Studio Build Tools, LLVM, Opus), clones
 # OpenSmash Ultimate, prepares the user's own game files and builds the game.
@@ -31,7 +33,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '4.4 (2026-11-04)'
+$KitVersion = '4.4.1 (2026-11-05)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
 # (WindowSmash, github.com/OpenSmash-Ultimate/WindowSmash, pinned at 8025b48 by kits 3.x, and OpenSmash merged on
@@ -680,7 +682,8 @@ function Get-DefaultInstallDir {
 }
 
 function Clone-Repo([string]$target) {
-    New-Item -ItemType Directory -Force (Split-Path $target -Parent) | Out-Null
+    $parent = [IO.Path]::GetDirectoryName($target)      # (D:\OpenSmash-Ultimate: D:\, which New-Item -Force cannot "create" in PowerShell 5.1)
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force $parent | Out-Null }
     Say (L "  Cloning OpenSmash Ultimate into $target ..." "  Clonage d'OpenSmash Ultimate dans $target ...")
     Log "git clone $WS_GIT_URL $target"
     Run-Native { & $Script:Git clone $WS_GIT_URL $target }
@@ -707,6 +710,7 @@ function Find-Repo([bool]$allowClone) {
                 $t = Join-Path $f 'OpenSmash-Ultimate'
             } else { $t = $a.Trim().Trim('"') }
             try { $t = [IO.Path]::GetFullPath($t) } catch { Warn (L "W13 invalid path: $t" "W13 chemin invalide : $t"); continue }
+            if ([IO.Path]::GetPathRoot($t) -eq $t) { $t = [IO.Path]::Combine($t, 'OpenSmash-Ultimate') }     # (a disk typed: a folder on it, as Browse does)
             if ($t -match 'OneDrive') { Warn (L 'W23 not in OneDrive: choose another folder' 'W23 pas dans OneDrive : choisis un autre dossier'); continue }
             $os = Get-OldOpenSmash      # (OpenSmash's folders are its own: never install into them)
             if ($os -and ((Test-Under $t $os.Repo) -or (Test-Under $t $os.Build))) { Warn (L "W13 $t is inside the OpenSmash install (menu 8): choose another folder" "W13 $t est dans l'installation OpenSmash (menu 8) : choisis un autre dossier"); continue }
@@ -716,6 +720,10 @@ function Find-Repo([bool]$allowClone) {
             }
             try { $free = (New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($t))).AvailableFreeSpace / 1GB } catch { Warn (L "W13 no disk found for $t" "W13 disque introuvable pour $t"); continue }
             if ($free -lt $NEED_GB) { Warn ((L "W22 only {0:N0} GB free on {1}: choose another disk" "W22 seulement {0:N0} Go libres sur {1} : choisis un autre disque") -f $free, [IO.Path]::GetPathRoot($t)); continue }
+            $parent = [IO.Path]::GetDirectoryName($t)
+            if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+                try { New-Item -ItemType Directory -Force $parent -ErrorAction Stop | Out-Null } catch { Warn (L "W13 $parent cannot be made ($($_.Exception.Message)): choose another folder" "W13 impossible de créer $parent ($($_.Exception.Message)) : choisis un autre dossier"); continue }
+            }
             Clone-Repo $t
             $Script:Repo = $t
         }
