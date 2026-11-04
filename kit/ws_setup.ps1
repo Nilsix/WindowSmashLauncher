@@ -6,6 +6,9 @@
 # is renamed and their shortcuts made again (Update-LauncherFiles), a WindowSmash folder moves to the merged repository
 # with git (Ensure-Revision), and an OpenSmash install gets a new one, its save taken over and the old folder offered for
 # deletion (Import-OpenSmashSave, Remove-OldOpenSmash). kit-opensmash\os_setup.ps1 only passes on to this file.
+# Kit 4.1: the migration's corner cases (an old OpenSmash build folder holding other files, game files kept inside it,
+# an update stopped before its compile, game files gone since the last build, no firmware, a copy without git), the
+# install folder on an SSD by default, and the players' own shortcuts to an old launcher file.
 # This file must stay UTF-8 with a BOM (Windows PowerShell 5.1 reads a BOM-less file as ANSI).
 # A complete installer: it installs what is missing (Git, Python 3.14, Visual Studio Build Tools, LLVM, Opus), clones
 # OpenSmash Ultimate, prepares the user's own game files and builds the game.
@@ -15,11 +18,11 @@
 # message is written as L 'English' 'French'. The report and the log stay in English.
 # Modes (-Mode, the launcher's argument): install, play, play-rollback, diag, unlock, optimize, dlc; none: the menu.
 # Test-only environment: WS_NO_BUILD (skip the compile), WS_STOP_AFTER=<step>, WS_NO_NOTEPAD, WS_REPORT_DIR,
-# WS_INPUTS_JSON (another inputs.json).
+# WS_INPUTS_JSON (another inputs.json), WS_DESKTOP_DIR (another Desktop; Downloads then not looked at).
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '4.0 (2026-11-04)'
+$KitVersion = '4.1 (2026-11-04)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
 # (WindowSmash, github.com/OpenSmash-Ultimate/WindowSmash, pinned at 8025b48 by kits 3.x, and OpenSmash merged on
@@ -58,6 +61,12 @@ $MENU_LNK  = 'OpenSmash Ultimate Launcher.lnk'
 $OLD_LNKS  = @(@('Smash Ultimate (WindowSmash).lnk', $true), @('Smash Ultimate (OpenSmash).lnk', $true),
                @('WindowSmash Launcher.lnk', $false), @('OpenSmash Launcher.lnk', $false))   # (name, plays)
 $SAVE_DIR  = 'save\0123456789abcdeffedcba9876543210'   # the game's save in its folder (runtime/hle_fs.c, tools/unlock_all.py)
+$BUILD_MARK = 'build\kit_build.txt'   # written after a compile: the pinned commit it built, and the exe's time
+# what the OpenSmash launcher's installer puts in a build folder of its own (ssbu-recomp scripts\install.py): a build
+# folder outside its repository is deleted only when it holds nothing else
+$OS_BUILD_ENTRIES = @('binaries', 'cache', 'config', 'downloads', 'dump', 'dump.part', 'install_state.json', 'logs',
+                      'nsz_cache', 'package', 'probe', 'python_path.txt', 'runtime', 'save_backups', 'saves',
+                      'selftest_userdata', 'state.json', 'sysdata', 'update_manifest.json', 'work')
 
 # ---- language --------------------------------------------------------------------------------
 $LangTxt = Join-Path $env:LOCALAPPDATA 'WindowSmash-setup\lang.txt'
@@ -115,7 +124,10 @@ $HomeDir  = Join-Path $env:LOCALAPPDATA 'WindowSmash-setup'
 $Stamp    = Get-Date -Format 'yyyyMMdd-HHmmss'
 $LogDir   = Join-Path $HomeDir "logs\$Stamp"
 $MainLog  = Join-Path $LogDir 'setup.log'
-$Desktop  = [Environment]::GetFolderPath('Desktop')
+$Desktop  = if ($env:WS_DESKTOP_DIR) { $env:WS_DESKTOP_DIR } else { [Environment]::GetFolderPath('Desktop') }   # (tests: elsewhere)
+$Downloads = $null      # (where browsers save the launcher file: the shell's own setting, the folder moved or not)
+if (-not $env:WS_DESKTOP_DIR) { try { $Downloads = [Environment]::ExpandEnvironmentVariables((Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders' -ErrorAction Stop).'{374DE290-123F-4565-9164-39C4925E467B}') } catch {} }
+$TaskbarPins = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
 $ReportDir = if ($env:WS_REPORT_DIR) { $env:WS_REPORT_DIR } else { $Desktop }   # (tests: elsewhere)
 $Report   = Join-Path $ReportDir 'OpenSmash-Ultimate-setup-report.txt'
 $Helper   = Join-Path $PSScriptRoot 'ws_setup.py'
@@ -504,6 +516,42 @@ function Test-PlainBase {
            (Test-Path -LiteralPath (Join-Path $Script:Repo 'dump\base\program_v0.nca'))
 }
 
+# The folder's version: its git HEAD; for a copy without git (or without git on the PC), $WS_COMMIT when the files the
+# kit checks are that commit's, else 'other'. $null when git cannot read it.
+function Get-RepoVersion {
+    $g = if ($Script:Git) { $Script:Git } else { Find-Git }
+    if ($g -and (Test-Path -LiteralPath (Join-Path $Script:Repo '.git'))) {
+        Set-GitSafeRepo
+        $h = "$(@(Run-Native { & $g -C $Script:Repo rev-parse HEAD 2>$null }) | Select-Object -First 1)".Trim()
+        if ($h -match '^[0-9a-f]{40}$') { return $h }
+        return $null
+    }
+    foreach ($f in $WS_FILES.Keys) {
+        $p = Join-Path $Script:Repo $f
+        if (-not (Test-Path -LiteralPath $p) -or (Get-NormalizedSha256 $p) -ne $WS_FILES[$f]) { return 'other' }
+    }
+    return $WS_COMMIT
+}
+
+# $true when build\ssbu.exe was compiled from the folder's current version. An update checks the new version out first
+# and compiles it last: one stopped in between (a file not chosen, the window closed, the PC off) leaves the new version
+# with the old game, which does not play online with the others. The kit writes $BUILD_MARK after each compile; a game
+# built without it (before kit 4.1, or by hand) counts as current unless runtime\ has files newer than it (a checkout
+# rewrites the files it changes).
+function Test-BuildCurrent([string]$version) {
+    $exe = Join-Path $Script:Repo 'build\ssbu.exe'
+    if (-not (Test-Path -LiteralPath $exe)) { return $false }
+    $ticks = "$((Get-Item -LiteralPath $exe).LastWriteTimeUtc.Ticks)"
+    $mark = Join-Path $Script:Repo $BUILD_MARK
+    if (Test-Path -LiteralPath $mark) {
+        $l = @(Get-Content -LiteralPath $mark -TotalCount 2)
+        if ($l.Count -ge 2 -and "$($l[1])".Trim() -eq $ticks) { return ("$($l[0])".Trim() -eq $version) }
+    }
+    $t = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
+    $newer = Get-ChildItem -LiteralPath (Join-Path $Script:Repo 'runtime') -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTimeUtc -gt $t } | Select-Object -First 1
+    return (-not $newer)
+}
+
 function Ensure-Git {
     Title 'Git'
     $Script:Git = Find-Git
@@ -587,13 +635,42 @@ function Get-RememberedRepo {
     return $null
 }
 
+# $true when $path is $dir or inside it (full paths, any case)
+function Test-Under([string]$path, [string]$dir) {
+    if (-not $path -or -not $dir) { return $false }
+    try { $p = [IO.Path]::GetFullPath($path).TrimEnd('\') + '\'; $d = [IO.Path]::GetFullPath($dir).TrimEnd('\') + '\' } catch { return $false }
+    return $p.StartsWith($d, [StringComparison]::OrdinalIgnoreCase)
+}
+
+# The drive roots ('C:\') on an internal SSD (not USB): the game reads its data and its shader cache from the disk while
+# it plays, and a USB hard disk makes it stall. Empty when Windows does not say (no admin rights are needed for this).
+function Get-SsdRoots {
+    $roots = @()
+    try {
+        $ssd = @(Get-PhysicalDisk -ErrorAction Stop | Where-Object { ($_.MediaType -eq 'SSD' -or $_.BusType -eq 'NVMe') -and $_.BusType -ne 'USB' } | ForEach-Object { "$($_.DeviceId)" })
+        foreach ($d in @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3')) {
+            try { $n = "$((Get-Partition -DriveLetter $d.DeviceID.Substring(0, 1) -ErrorAction Stop | Select-Object -First 1).DiskNumber)" } catch { continue }
+            if ($ssd -contains $n) { $roots += ($d.DeviceID + '\') }
+        }
+    } catch { Log "disk types unknown: $($_.Exception.Message)" }
+    return $roots
+}
+
 function Get-DefaultInstallDir {
-    # next to the OpenSmash launcher's install when there is one (it goes once the new game is built), else the local
-    # disk with the most free space: the game and its build take about 35 GB
+    # an internal SSD with room (the game and its build take about 35 GB), else next to the OpenSmash launcher's install
+    # when there is one (it goes once the new game is built, or before to make room), else the local disk with the most
+    # free space. Never inside the old OpenSmash install's folders: they are deleted.
     $os = Get-OldOpenSmash
-    if ($os) { return (Join-Path (Split-Path $os.Repo -Parent) 'OpenSmash-Ultimate') }
-    $best = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Sort-Object FreeSpace -Descending | Select-Object -First 1
-    $root = if ($best) { $best.DeviceID + '\' } else { 'C:\' }
+    $disks = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Sort-Object FreeSpace -Descending)
+    $ssd = Get-SsdRoots
+    $fast = $disks | Where-Object { $ssd -contains ($_.DeviceID + '\') -and $_.FreeSpace / 1GB -ge $NEED_GB } | Select-Object -First 1
+    $root = if ($fast) { $fast.DeviceID + '\' } else { $null }
+    if ($os -and (-not $root -or $root -eq [IO.Path]::GetPathRoot($os.Repo))) {
+        $t = Join-Path (Split-Path $os.Repo -Parent) 'OpenSmash-Ultimate'
+        if (-not (Test-Under $t $os.Repo) -and -not (Test-Under $t $os.Build)) { return $t }
+        if (-not $root) { $root = [IO.Path]::GetPathRoot($os.Repo) }
+    }
+    if (-not $root) { $root = if ($disks) { $disks[0].DeviceID + '\' } else { 'C:\' } }
     return (Join-Path $root 'Jeux\OpenSmash-Ultimate')
 }
 
@@ -626,6 +703,8 @@ function Find-Repo([bool]$allowClone) {
             } else { $t = $a.Trim().Trim('"') }
             try { $t = [IO.Path]::GetFullPath($t) } catch { Warn (L "W13 invalid path: $t" "W13 chemin invalide : $t"); continue }
             if ($t -match 'OneDrive') { Warn (L 'W23 not in OneDrive: choose another folder' 'W23 pas dans OneDrive : choisis un autre dossier'); continue }
+            $os = Get-OldOpenSmash      # (its folders are deleted once the new game is built: never install into them)
+            if ($os -and ((Test-Under $t $os.Repo) -or (Test-Under $t $os.Build))) { Warn (L "W13 $t is inside the old OpenSmash install, which goes: choose another folder" "W13 $t est dans l'ancienne installation OpenSmash, qui sera supprimée : choisis un autre dossier"); continue }
             if (Test-RepoDir $t) { $Script:Repo = $t; break }          # an OpenSmash Ultimate folder already there: used as it is
             if ((Test-Path -LiteralPath $t) -and (Get-ChildItem -LiteralPath $t -Force | Select-Object -First 1)) {
                 Warn (L "W13 $t already exists and is not empty: choose another folder" "W13 $t existe déjà et n'est pas vide : choisis un autre dossier"); continue
@@ -906,13 +985,37 @@ int main(void) {
 function Load-Inputs { if (Test-Path -LiteralPath $InputsJs) { try { return (Get-Content -LiteralPath $InputsJs -Raw | ConvertFrom-Json) } catch {} }; return $null }
 function Save-Inputs { $Script:Inputs | ConvertTo-Json | Set-Content -LiteralPath $InputsJs -Encoding UTF8 }
 
+# What a built folder holds of the game files (kits 3.x on): keys\prod.keys, the decrypted base game (dump\game_files or
+# dump\base) and the update staged in dump\game_files (a hard link or a copy of the player's .nsp). An update of the game
+# needs nothing else, so a player whose original files are gone since (moved, deleted, on an unplugged disk) is not asked
+# for them again. $null when something is missing.
+function Get-LocalInputs {
+    if (-not $Script:Repo) { return $null }
+    $k = Join-Path $Script:Repo 'keys\prod.keys'
+    if (-not (Test-Path -LiteralPath $k) -or -not (Test-PlainBase)) { return $null }
+    $u = Get-ChildItem -LiteralPath (Join-Path $Script:Repo 'dump\game_files') -File -Filter '*.nsp' -ErrorAction SilentlyContinue | Sort-Object Length -Descending | Select-Object -First 1
+    if (-not $u) { return $null }
+    $t = Join-Path $Script:Repo 'keys\title.keys'
+    return @{ update = $u.FullName; prodkeys = $k; titlekeys = $(if (Test-Path -LiteralPath $t) { $t } else { $null }) }
+}
+
 function Ask-Inputs {
     Title (L 'Game files (yours, dumped from your console)' 'Fichiers du jeu (les tiens, dumpés de ta console)')
     $prev = Load-Inputs
     $have = { param($p) $p -and (Test-Path -LiteralPath $p) }
+    $local = Get-LocalInputs
+    if ($local -and -not ($prev -and (& $have $prev.base) -and (& $have $prev.prodkeys))) {
+        Say (L "  The game files chosen before are no longer where they were, but this folder holds what the update needs" "  Les fichiers du jeu choisis avant ne sont plus à leur place, mais ce dossier contient ce qu'il faut pour la mise à jour")
+        Say (L "  (prod.keys, the decrypted base game, the $EXPECT_VERSION update): using them." "  (prod.keys, le jeu de base déchiffré, la mise à jour $EXPECT_VERSION) : je les utilise.")
+        $Script:Inputs = @{ base = $null; update = $local.update; prodkeys = $local.prodkeys; titlekeys = $local.titlekeys
+                            dlc = $(if ($prev -and (& $have $prev.dlc)) { $prev.dlc } else { $null }); firmware = $(if ($prev) { $prev.firmware } else { $null }); update_version = $null }
+        Log "game files: the folder's own ($($local.update))"
+        return
+    }
     if ($prev -and (& $have $prev.base) -and (& $have $prev.prodkeys)) {
         # (an update checked as the version needed now is reused; kit 2.x's 13.0.4 one is not: the new one is asked)
         $upd = if ((& $have $prev.update) -and $prev.update_version -eq $EXPECT_VERSION) { $prev.update } else { $null }
+        if (-not $upd -and $local) { $upd = $local.update }      # (the one staged at the last build, checked again below)
         Say (L "  Files chosen last time:" "  Fichiers choisis la dernière fois :")
         Say "    $(L 'base game  ' 'jeu de base') : $($prev.base)"
         if ($upd) { Say "    $(L 'update     ' 'mise à jour') : $upd" }
@@ -955,16 +1058,26 @@ function Check-Inputs {
     Title (L 'Checking the files' 'Vérification des fichiers')
     $keys = Join-Path $Script:Repo 'keys'
     New-Item -ItemType Directory -Force $keys | Out-Null
-    Copy-Item -LiteralPath $Script:Inputs.prodkeys -Destination (Join-Path $keys 'prod.keys') -Force
-    if ($Script:Inputs.titlekeys) { Copy-Item -LiteralPath $Script:Inputs.titlekeys -Destination (Join-Path $keys 'title.keys') -Force }
+    $same = { param($a, $b) [IO.Path]::GetFullPath($a) -eq [IO.Path]::GetFullPath($b) }    # (the folder's own keys: no copy over itself)
+    if (-not (& $same $Script:Inputs.prodkeys (Join-Path $keys 'prod.keys'))) { Copy-Item -LiteralPath $Script:Inputs.prodkeys -Destination (Join-Path $keys 'prod.keys') -Force }
+    if ($Script:Inputs.titlekeys -and -not (& $same $Script:Inputs.titlekeys (Join-Path $keys 'title.keys'))) { Copy-Item -LiteralPath $Script:Inputs.titlekeys -Destination (Join-Path $keys 'title.keys') -Force }
     $Script:Keys = $keys
     $r = Helper-OrFail @('keys', '--keys', $keys) 'E41'
     $Script:Info['prod.keys'] = "{0} keys, generations key_area 0..{1}, titlekek 0..{2}" -f $r.Json.count, (($r.Json.kak_application | Measure-Object -Maximum).Maximum), (($r.Json.titlekek | Measure-Object -Maximum).Maximum)
     Ok (L "prod.keys: $($r.Json.count) keys" "prod.keys : $($r.Json.count) clés")
-    $b = Helper-OrFail @('identify', $Script:Inputs.base, '--keys', $keys, '--role', 'base') 'E42'
-    $Script:Base = $b.Json
-    $Script:Info['Base game'] = "{0} ({1:N1} GB): {2} title {3} version {4}" -f (Split-Path $Script:Inputs.base -Leaf), ((Get-Item -LiteralPath $Script:Inputs.base).Length / 1GB), $b.Json.kind, $b.Json.program, $b.Json.display
-    Ok "$(L 'base game' 'jeu de base') : $($b.Json.kind.ToUpper()) version $($b.Json.display)"
+    foreach ($f in @($Script:Inputs.base, $Script:Inputs.update)) {
+        if ($f -and [IO.Path]::GetExtension($f) -in '.nsz', '.xcz') { Set-Step 'Files' 'FAILED' 'compressed'; Fail 'E42' (L "$(Split-Path $f -Leaf) is compressed (.nsz/.xcz): give the uncompressed .nsp/.xci (decompress it with nsz, or dump it again)" "$(Split-Path $f -Leaf) est compressé (.nsz/.xcz) : donne le .nsp/.xci non compressé (décompresse-le avec nsz, ou dumpe-le à nouveau)") }
+    }
+    $b = $null; $Script:Base = $null
+    if ($Script:Inputs.base) {
+        $b = Helper-OrFail @('identify', $Script:Inputs.base, '--keys', $keys, '--role', 'base') 'E42'
+        $Script:Base = $b.Json
+        $Script:Info['Base game'] = "{0} ({1:N1} GB): {2} title {3} version {4}" -f (Split-Path $Script:Inputs.base -Leaf), ((Get-Item -LiteralPath $Script:Inputs.base).Length / 1GB), $b.Json.kind, $b.Json.program, $b.Json.display
+        Ok "$(L 'base game' 'jeu de base') : $($b.Json.kind.ToUpper()) version $($b.Json.display)"
+    } else {      # (Get-LocalInputs: the decrypted copy made at the last build)
+        $Script:Info['Base game'] = 'the decrypted copy in the folder (original file not found)'
+        Ok (L 'base game: the decrypted copy in the folder' 'jeu de base : la copie déchiffrée du dossier')
+    }
     $u = Helper-OrFail @('identify', $Script:Inputs.update, '--keys', $keys, '--role', 'update', '--expect', $EXPECT_VERSION) 'E43'
     $Script:Info['Update'] = "{0} ({1:N1} GB): version {2} (v{3})" -f (Split-Path $Script:Inputs.update -Leaf), ((Get-Item -LiteralPath $Script:Inputs.update).Length / 1GB), $u.Json.display, $u.Json.title_version
     if ($u.Json.display -ne $EXPECT_VERSION) {   # (OpenSmash Ultimate builds and plays this version only)
@@ -988,6 +1101,7 @@ function Prepare-Base {
     # (where the game reads it: dump\game_files, also on a disk without hard links; kit 3.0/3.1's dump\base copy is kept)
     $out = Join-Path $Script:Repo 'dump\base\program_v0.nca'
     if (-not (Test-Path -LiteralPath $out)) { $out = Join-Path $Script:Repo 'dump\game_files\program_v0.nca' }
+    if (-not $Script:Inputs.base -and (Test-PlainBase)) { Ok (L 'base game already decrypted in the folder' 'jeu de base déjà déchiffré dans le dossier'); Set-Step 'Base game' 'OK' 'already there'; return }
     Helper-OrFail @('plain-nca', $Script:Inputs.base, $out, '--keys', $Script:Keys) 'E50' -Live -name 'plain-nca' | Out-Null
     Ok (L 'base game ready (OpenSmash Ultimate reads it in place: no second copy)' 'jeu de base prêt (OpenSmash Ultimate le lit sur place : pas de seconde copie)')
     Set-Step 'Base game' 'OK'
@@ -1000,6 +1114,18 @@ function Prepare-Fonts {
               'nintendo_udjxh-db_zh-tw_003.bfttf', 'nintendo_udsg-r_ko_003.bfttf', 'nintendo_ext_003.bfttf')
     $missing = { @($need | Where-Object { -not (Test-Path -LiteralPath (Join-Path $fonts $_)) }) }
     if (-not (& $missing).Count) { Ok (L 'fonts already there' 'polices déjà là'); Set-Step 'Fonts' 'OK' 'already there'; return }
+    # Without a firmware the game uses the open fonts of third_party\fonts_open; dump\fonts.none says so, and the build
+    # (tools\build_game.py, run without --firmware) then does not ask for one.
+    $none = "$fonts.none"
+    $openFonts = {
+        Warn (L 'W45 no firmware: the game uses open fonts in place of the console''s (other typefaces for Latin text, no Chinese, Japanese or Korean text). Fights are not affected.' 'W45 pas de firmware : le jeu utilise des polices libres à la place de celles de la console (autres polices pour le texte latin, pas de texte chinois, japonais ou coréen). Les combats ne changent pas.')
+        New-Item -ItemType Directory -Force (Split-Path $fonts -Parent) | Out-Null
+        [IO.File]::WriteAllText($none, "no firmware was given: the game uses the open fonts of third_party/fonts_open; give --firmware to take your firmware's`n")
+        Set-Step 'Fonts' 'OK' 'open fonts (no firmware)'
+    }
+    if ((Test-Path -LiteralPath $none) -and -not ($Script:Inputs.firmware -and (Test-Path -LiteralPath $Script:Inputs.firmware))) {
+        Ok (L 'no firmware: the open fonts (as at the last install)' 'pas de firmware : les polices libres (comme à la dernière installation)'); Set-Step 'Fonts' 'OK' 'open fonts'; return
+    }
     if ($Script:Base.kind -eq 'xci' -and $Script:Base.xci_update_partition) {
         $r = Invoke-Helper @('fonts', $Script:Inputs.base, $fonts, '--keys', $Script:Keys) -Live -name 'fonts-xci'
         if ($r.Code -eq 0) { Ok (L 'fonts taken from the XCI' 'polices extraites du XCI'); Set-Step 'Fonts' 'OK' 'XCI'; return }
@@ -1015,11 +1141,19 @@ function Prepare-Fonts {
             Say (L "  Emulator firmware found: $($suggest[0])" "  Firmware d'émulateur trouvé : $($suggest[0])")
             if (Ask-YesNo (L '  Take the fonts from it?' '  Je prends les polices dedans ?')) { $src = $suggest[0] }
         }
-        if (-not $src) { $src = Pick-Folder (L 'Choose your console''s FIRMWARE folder (.nca files: a firmware dump, or an emulator''s registered folder)' 'Choisis le dossier du FIRMWARE de ta console (fichiers .nca : dump du firmware, ou dossier registered d''un émulateur)') }
-        if (-not $src) { Set-Step 'Fonts' 'FAILED' 'no firmware'; Fail 'E45' (L 'firmware folder not chosen' 'dossier du firmware non choisi') }
+        if (-not $src) {
+            Say (L '  The game''s fonts come from your console''s firmware (optional: without it, open fonts are used; cancel the window then).' '  Les polices du jeu viennent du firmware de ta console (facultatif : sans lui, des polices libres sont utilisées ; annule la fenêtre dans ce cas).')
+            $src = Pick-Folder (L 'Choose your console''s FIRMWARE folder (.nca files: a firmware dump, or an emulator''s registered folder). Cancel: open fonts' 'Choisis le dossier du FIRMWARE de ta console (fichiers .nca : dump du firmware, ou dossier registered d''un émulateur). Annuler : polices libres')
+        }
+        if (-not $src) { & $openFonts; return }
         $Script:Inputs.firmware = $src; Save-Inputs
     }
-    Helper-OrFail @('fonts', $src, $fonts, '--keys', $Script:Keys) 'E45' -Live -name 'fonts-firmware' | Out-Null
+    $r = Invoke-Helper @('fonts', $src, $fonts, '--keys', $Script:Keys) -Live -name 'fonts-firmware'
+    if ($r.Code -ne 0) {      # (most often a firmware newer than the keys: the build goes on with the open fonts)
+        Warn (L "W45 fonts not read from $src ($($r.ErrText))" "W45 polices non lues dans $src ($($r.ErrText))")
+        & $openFonts; return
+    }
+    if (Test-Path -LiteralPath $none) { Remove-Item -LiteralPath $none -Force }
     Ok (L 'fonts taken from the firmware' 'polices extraites du firmware')
     Set-Step 'Fonts' 'OK' 'firmware'
 }
@@ -1115,6 +1249,7 @@ function Build-Game([string]$Label = (L "$EXPECT_VERSION update and compile of t
     $exe = Join-Path $Script:Repo 'build\ssbu.exe'
     if ($env:WS_NO_BUILD) { Set-Step 'Compilation' 'TEST' 'skipped (WS_NO_BUILD)'; return }
     if (-not (Test-Path -LiteralPath $exe)) { Set-Step 'Compilation' 'FAILED' 'no exe'; Fail 'E62' (L "$exe not found" "$exe introuvable") }
+    try { [IO.File]::WriteAllText((Join-Path $Script:Repo $BUILD_MARK), "$(Get-RepoVersion)`r`n$((Get-Item -LiteralPath $exe).LastWriteTimeUtc.Ticks)`r`n") } catch { Log "build marker: $($_.Exception.Message)" }
     $Script:Info['ssbu.exe'] = "{0:N0} MB" -f ((Get-Item -LiteralPath $exe).Length / 1MB)
     Ok (L "game built: $exe" "jeu compilé : $exe")
     Set-Step 'Compilation' 'OK' "$attempt attempt(s)"
@@ -1306,7 +1441,9 @@ function Add-DLC {
     if (-not $Script:Repo -or -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) { Say (L "  The game is not installed in $EXPECT_VERSION yet: choose 1) Install." "  Le jeu n'est pas encore installé en $EXPECT_VERSION : choisis 1) Installer."); return }
     if (Get-Process ssbu -ErrorAction SilentlyContinue) { Fail 'E53' (L 'the game is running: close it first' 'le jeu tourne : ferme-le d''abord') }
     $prev = Load-Inputs
-    if (-not ($prev -and $prev.update -and (Test-Path -LiteralPath $prev.update) -and $prev.update_version -eq $EXPECT_VERSION)) {
+    $upd = if ($prev -and $prev.update -and (Test-Path -LiteralPath $prev.update) -and $prev.update_version -eq $EXPECT_VERSION) { $prev.update } else { $null }
+    if (-not $upd) { $local = Get-LocalInputs; if ($local) { $upd = $local.update } }      # (the one staged at the build)
+    if (-not $upd) {
         Fail 'E40' (L "the $EXPECT_VERSION update chosen at the install is not found: choose 1) Install" "la mise à jour $EXPECT_VERSION choisie à l'installation est introuvable : choisis 1) Installer")
     }
     $Script:Keys = Join-Path $Script:Repo 'keys'
@@ -1315,10 +1452,10 @@ function Add-DLC {
     Say (L '  The DLC (fighters, outfits, spirits) are the ones you bought, dumped from your Switch with nxdumptool' '  Les DLC (combattants, costumes, esprits) sont ceux que tu as achetés, dumpés de ta Switch avec nxdumptool')
     Say (L '  (.nsp files). To play online together, have the same DLC.' '  (fichiers .nsp). Pour jouer en ligne ensemble, ayez les mêmes DLC.')
     $d = Pick-Folder (L 'Choose the folder that holds your DLC (.nsp dumped from your Switch)' 'Choisis le dossier qui contient tes DLC (.nsp dumpés de ta Switch)')
-    if (-not $d) { Fail 'E40' (L 'DLC folder not chosen' 'dossier des DLC non choisi') }
+    if (-not $d) { Say (L '  No folder chosen: nothing changed.' '  Aucun dossier choisi : rien n''a changé.'); return }
     # (-Include does nothing with -LiteralPath in PowerShell 5.1: the extension is tested instead)
     if (-not (Get-ChildItem -LiteralPath $d -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.nsp', '.nca' } | Select-Object -First 1)) { Fail 'E40' (L "no .nsp file in $d" "pas de fichier .nsp dans $d") }
-    $Script:Inputs = @{ base = $prev.base; update = $prev.update; prodkeys = $prev.prodkeys; titlekeys = $prev.titlekeys; dlc = $d; firmware = $prev.firmware; update_version = $prev.update_version }
+    $Script:Inputs = @{ base = $prev.base; update = $upd; prodkeys = $prev.prodkeys; titlekeys = $prev.titlekeys; dlc = $d; firmware = $prev.firmware; update_version = $EXPECT_VERSION }
     Save-Inputs
     Ensure-LLVM; Ensure-Opus; Ensure-SDL3      # (the build's environment as at the install: the game stays as it is)
     Build-Game (L 'The DLC into the game (a few minutes)' 'Les DLC dans le jeu (quelques minutes)')
@@ -1368,13 +1505,18 @@ function Start-Game([bool]$rollback = $false) {
         Say (L '  Rollback on (experimental): it plays the Local Wireless rooms of 2 players who both started the game with it (option 3).' '  Rollback activé (expérimental) : il sert dans les rooms Local Wireless à 2 joueurs qui ont tous les deux lancé le jeu avec (option 3).')
     }
     Log "start: rollback=$rollback"
+    $launcher = Join-Path $Script:Repo 'tools\launcher.ps1'
     try {
         $t0 = Get-Date
-        $p = Start-Process -FilePath $ps -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + (Join-Path $Script:Repo 'tools\launcher.ps1') + '"'), '-Auto') -WorkingDirectory $Script:Repo -WindowStyle Hidden -PassThru
+        if (Test-Path -LiteralPath $launcher) {
+            $p = Start-Process -FilePath $ps -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $launcher + '"'), '-Auto') -WorkingDirectory $Script:Repo -WindowStyle Hidden -PassThru
+        } else {      # (a folder still at kit 2.0-2.2's WindowSmash, 13.0.4: its Play SSBU.bat picks the version folder)
+            $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', ('"' + (Join-Path $Script:Repo 'Play SSBU.bat') + '"') -WorkingDirectory $Script:Repo -PassThru
+        }
         $null = $p.Handle      # (Windows PowerShell 5.1 loses the exit code of a process whose handle was never asked for)
         Say (L '  The game window opens (game version, display, online, controllers): click Play to play.' '  La fenêtre du jeu s''ouvre (version du jeu, affichage, en ligne, manettes) : clique sur Play pour jouer.')
         while (-not $p.HasExited -and -not (Get-Process ssbu -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 500 }
-        if ($p.HasExited -and $p.ExitCode -eq 2) {      # (the window could not open: the game as Play SSBU.bat then starts it)
+        if ($p.HasExited -and $p.ExitCode -eq 2 -and (Test-Path -LiteralPath $launcher)) {      # (the window could not open: the game as Play SSBU.bat then starts it)
             Log 'launcher.ps1: no window (exit 2): the game started directly'
             $t0 = Get-Date
             Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', 'build\ssbu.exe dump\modules --status 30 --online > build\play.log 2>&1' -WorkingDirectory $Script:Repo -WindowStyle Minimized
@@ -1390,7 +1532,7 @@ function Start-Game([bool]$rollback = $false) {
         if (-not (Get-Process ssbu -ErrorAction SilentlyContinue)) { Fail 'E70' (L 'the game closed at once' "le jeu s'est fermé tout de suite") $log }
         Ok (L 'game started (the first time, the screen may stay black during the intro movie)' 'jeu lancé (la première fois, l''écran peut rester noir pendant la vidéo d''intro)')
     } catch { Fail 'E70' "$($_.Exception.Message)" }
-    if (-not $hadSave) {     # (the first start writes the save: every fighter unlocked in it once the game is closed)
+    if (-not $hadSave -and (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) {     # (the first start writes the save: every fighter unlocked in it once the game is closed)
         Say (L '  Leave this window open: when you close the game, every fighter gets unlocked in its new save.' '  Laisse cette fenêtre ouverte : quand tu fermeras le jeu, tous les personnages seront débloqués dans sa nouvelle sauvegarde.')
         while (Get-Process ssbu -ErrorAction SilentlyContinue) { Start-Sleep -Seconds 2 }
         Start-Sleep -Seconds 2
@@ -1413,8 +1555,12 @@ function Get-OldOpenSmash {
         $p = "$(Get-Content -LiteralPath $loc -TotalCount 1 -Encoding UTF8)".Trim().Trim('"')
         if ($p) { $p = [Environment]::ExpandEnvironmentVariables($p); if (-not [IO.Path]::IsPathRooted($p)) { $p = Join-Path $r $p }; $b = $p }
     }
-    return [pscustomobject]@{ Repo = $r.TrimEnd('\'); Build = $b.TrimEnd('\'); Save = (Join-Path $b 'saves\save') }
+    $b = if ($b -match '^[A-Za-z]:\\*$') { $b.Substring(0, 2) + '\' } else { $b.TrimEnd('\') }    # (a drive root stays 'D:\', never 'D:')
+    return [pscustomobject]@{ Repo = $r.TrimEnd('\'); Build = $b; Save = [IO.Path]::Combine($b, 'saves\save') }   # (Join-Path fails on a drive that is not there)
 }
+
+# $true when the old install's build folder lies on a disk that is not there now (an unplugged USB disk)
+function Test-OldBuildGone($os) { return -not (Test-Path -LiteralPath ([IO.Path]::GetPathRoot($os.Build))) }
 
 # A save folder copied whole, then counted: $true when every file came over.
 function Copy-Save([string]$from, [string]$to) {
@@ -1429,6 +1575,10 @@ function Import-OpenSmashSave {
     $dst = Join-Path $Script:Repo $SAVE_DIR
     if (Test-Path -LiteralPath (Join-Path $dst 'save_data\system_data.bin')) { return }       # a save of its own: kept
     $os = Get-OldOpenSmash; $src = $null
+    if ($os -and (Test-OldBuildGone $os)) {
+        Warn (L "W90 the OpenSmash game folder $($os.Build) is not reachable (its disk is unplugged?): its save is not taken over yet. Plug the disk in and choose 1) Install again." "W90 le dossier du jeu OpenSmash $($os.Build) est inaccessible (son disque est débranché ?) : sa sauvegarde n'est pas encore reprise. Branche le disque et choisis à nouveau 1) Installer.")
+        return
+    }
     if ($os -and (Test-Path -LiteralPath (Join-Path $os.Save 'save_data\system_data.bin'))) {
         if (Test-Path -LiteralPath "$($os.Save).commit") {      # (its game stopped while writing it: the save is half old, half new)
             Warn (L "W90 the OpenSmash save was being written when its game stopped: not taken over (it stays in $($os.Save))" "W90 la sauvegarde OpenSmash était en cours d'écriture quand son jeu s'est arrêté : pas reprise (elle reste dans $($os.Save))")
@@ -1450,18 +1600,43 @@ function Import-OpenSmashSave {
 function Remove-OldOpenSmash([string]$forRoot = '') {
     $os = Get-OldOpenSmash
     if (-not $os) { return $false }
+    if (Test-OldBuildGone $os) { Log "old OpenSmash kept: the disk of $($os.Build) is not there"; return $false }   # (its save is there: Import-OpenSmashSave said so)
     $dirs = @($os.Repo)
-    if (-not "$($os.Build)\".StartsWith("$($os.Repo)\", [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $os.Build)) { $dirs += $os.Build }
+    $outside = -not (Test-Under $os.Build $os.Repo)
+    if ($outside -and (Test-Path -LiteralPath $os.Build)) { $dirs += $os.Build }
     if ($forRoot) {
         if (-not @($dirs | Where-Object { [IO.Path]::GetPathRoot($_) -eq $forRoot }).Count) { return $false }
     } elseif ($env:WS_NO_BUILD -or -not $Script:Repo -or -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) { return $false }
     Title (L 'Old OpenSmash install' 'Ancienne installation OpenSmash')
-    if (Get-Process ssbu_native -ErrorAction SilentlyContinue) { Say (L '  Kept for now: its game is running.' '  Gardée pour l''instant : son jeu tourne.'); return $false }
+    # Kept, with the reason, when deleting it could take something else: what it holds besides OpenSmash's own files (a
+    # build folder chosen in OpenSmash's installer window is used as it is: D:\Games, a drive root...), the new install, the
+    # save kept for it, the player's game files, a link, a save its game was writing, its game running.
+    $why = $null
+    $inputs = Load-Inputs
+    $theirs = @(if ($inputs) { foreach ($k in 'base', 'update', 'prodkeys', 'titlekeys', 'dlc', 'firmware') { "$($inputs.$k)" } }) | Where-Object { $_ }
+    if (Get-Process ssbu_native -ErrorAction SilentlyContinue) { $why = L 'its game is running' 'son jeu tourne' }
+    elseif (Test-Path -LiteralPath "$($os.Save).commit") { $why = L "its save was being written when its game stopped: start the old OpenSmash once and close it, then choose 1) Install again" "sa sauvegarde était en cours d'écriture quand son jeu s'est arrêté : lance l'ancien OpenSmash une fois et ferme-le, puis choisis à nouveau 1) Installer" }
+    else {
+        foreach ($d in $dirs) {
+            if ($d -match '^[A-Za-z]:\\?$' -or $d -match '^\\\\[^\\]+\\[^\\]+\\?$') { $why = L "$d is a whole disk" "$d est un disque entier"; break }
+            if ((Test-Under $Script:Repo $d) -or (Test-Under $OsSaveKeep $d)) { $why = L "the new install is inside $d" "la nouvelle installation est dans $d"; break }
+            $f = $theirs | Where-Object { Test-Under $_ $d } | Select-Object -First 1
+            if ($f) { $why = L "your game file $f is inside it: move it elsewhere first, then choose 1) Install again" "ton fichier du jeu $f est dedans : déplace-le ailleurs d'abord, puis choisis à nouveau 1) Installer"; break }
+        }
+        if (-not $why -and $outside -and (Test-Path -LiteralPath $os.Build)) {
+            $extra = @(Get-ChildItem -LiteralPath $os.Build -Force -ErrorAction SilentlyContinue | Where-Object { $OS_BUILD_ENTRIES -notcontains $_.Name } | ForEach-Object { $_.Name })
+            if ($extra) { $why = L "$($os.Build) also holds files that are not OpenSmash's ($(($extra | Select-Object -First 5) -join ', ')): delete only OpenSmash's folders there (dump, work, saves...) and $($os.Repo)" "$($os.Build) contient aussi des fichiers qui ne sont pas à OpenSmash ($(($extra | Select-Object -First 5) -join ', ')) : supprime seulement les dossiers d'OpenSmash dedans (dump, work, saves...) et $($os.Repo)" }
+        }
+    }
+    if ($why) { Say (L "  Kept ($why). You can delete it by hand: $($dirs -join ' and ')." "  Gardée ($why). Tu peux la supprimer à la main : $($dirs -join ' et ')."); return $false }
     $files = @(foreach ($d in $dirs) { Get-ChildItem -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue })
     if ($files | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) { Say (L "  Kept (it holds a link): you can delete $($dirs -join ' and ') by hand." "  Gardée (elle contient un lien) : tu peux supprimer $($dirs -join ' et ') à la main."); return $false }
     $size = ($files | Where-Object { -not $_.PSIsContainer } | Measure-Object Length -Sum).Sum / 1GB
-    if ($forRoot) {
-        Say ((L "  Not enough room on {0}: the old OpenSmash install takes {1:N1} GB there ({2}), and OpenSmash Ultimate replaces it." "  Pas assez de place sur {0} : l'ancienne installation OpenSmash y prend {1:N1} Go ({2}), et OpenSmash Ultimate la remplace.") -f $forRoot, $size, ($dirs -join ', '))
+    if ($forRoot) {      # (only what lies on that disk frees room there, and only enough room is worth it before the build)
+        $here = ($files | Where-Object { -not $_.PSIsContainer -and [IO.Path]::GetPathRoot($_.FullName) -eq $forRoot } | Measure-Object Length -Sum).Sum / 1GB
+        $free = try { (New-Object IO.DriveInfo $forRoot).AvailableFreeSpace / 1GB } catch { 0 }
+        if ($free + $here -lt $NEED_GB) { Say ((L "  It takes {0:N1} GB on {1}: even without it, there would not be room enough there." "  Elle prend {0:N1} Go sur {1} : même sans elle, il n'y aurait pas assez de place.") -f $here, $forRoot); return $false }
+        Say ((L "  Not enough room on {0}: the old OpenSmash install takes {1:N1} GB there ({2}), and OpenSmash Ultimate replaces it." "  Pas assez de place sur {0} : l'ancienne installation OpenSmash y prend {1:N1} Go ({2}), et OpenSmash Ultimate la remplace.") -f $forRoot, $here, ($dirs -join ', '))
         $q = L '  Delete it now? (its save is kept and comes over to the new install)' '  Je la supprime maintenant ? (sa sauvegarde est gardée et reprise dans la nouvelle installation)'
     } else {
         Say ((L "  OpenSmash ({0:N1} GB: {1}) is replaced by OpenSmash Ultimate and no longer used." "  OpenSmash ({0:N1} Go : {1}) est remplacé par OpenSmash Ultimate et ne sert plus.") -f $size, ($dirs -join ', '))
@@ -1496,48 +1671,89 @@ function Remove-OldOpenSmash([string]$forRoot = '') {
 function Remove-WhenClosed([string]$path, [string]$sha) {
     $cmdPid = [int](Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop).ParentProcessId
     if (-not $cmdPid) { throw 'no parent process' }
-    $q = $path -replace "'", "''"
-    $s = "try { Wait-Process -Id $cmdPid -ErrorAction Stop } catch {}; Start-Sleep -Seconds 1; " +
-         "if ((Test-Path -LiteralPath '$q' -PathType Leaf) -and (Get-FileHash -LiteralPath '$q' -Algorithm SHA256).Hash -eq '$sha') { Remove-Item -LiteralPath '$q' -Force }"
+    # (the path goes through the environment, not the script text: any quote or character in a folder name is safe)
+    $s = "try { Wait-Process -Id $cmdPid -ErrorAction Stop } catch {}; Start-Sleep -Seconds 1; `$q = `$env:WSL_DELETE; " +
+         "if ((Test-Path -LiteralPath `$q -PathType Leaf) -and (Get-FileHash -LiteralPath `$q -Algorithm SHA256).Hash -eq '$sha') { Remove-Item -LiteralPath `$q -Force }"
     $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($s))
-    Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -ArgumentList @('-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $enc) -WindowStyle Hidden
+    $env:WSL_DELETE = $path
+    try { Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -ArgumentList @('-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $enc) -WindowStyle Hidden }
+    finally { Remove-Item Env:WSL_DELETE -ErrorAction SilentlyContinue }
     Log "launcher file deleted once cmd.exe $cmdPid has closed: $path"
 }
 
 # The players' launcher file was "WindowSmash Launcher.bat" or "OpenSmash Launcher.bat", in a folder of their own
 # (Desktop, Downloads...); since kit 4.0 it is "OpenSmash Ultimate Launcher.bat". An old copy's bootstrap refreshes it in
 # place with the repository's file of the same name (which the repository keeps, as a copy of the new file), then runs
-# this kit with -KitDir = that copy's folder: there an old name holding the new file becomes the new name. A file that
-# differs (one its update could not refresh) stays as it is. The clone of the repository keeps every name. The shortcuts
-# the kits made (Desktop, Start menu) on the clone's old names are made again on the new one, under the new names.
+# this kit with -KitDir = that copy's folder: there any other name holding the new file ("WindowSmash Launcher (1).bat"
+# too) becomes the new name. A file that differs (one its update could not refresh) stays as it is. An old launcher file
+# on the Desktop or in Downloads that did not start this run (the player used a shortcut) is replaced by the new file
+# under the new name. The clone of the repository keeps every name. The shortcuts the kits made (Desktop, Start menu) on
+# the clone's old names are made again on the new one, under the new names; the player's own shortcuts to a renamed file
+# (Desktop, Start menu, taskbar) are pointed at its new name.
 function Update-LauncherFiles {
     $clone = (Split-Path $PSScriptRoot -Parent).TrimEnd('\')
     $new = Join-Path $clone $NEW_BAT
     if (-not (Test-Path -LiteralPath $new -PathType Leaf)) { return }
     $want = Get-FileSha256 $new
+    $renamed = @{}      # old full path -> new full path
+    $rename = {
+        param([string]$p, [string]$dir)
+        $dst = Join-Path $dir $NEW_BAT
+        if (-not (Test-Path -LiteralPath $dst -PathType Leaf) -or (Get-FileSha256 $dst) -ne $want) { Copy-Item -LiteralPath $new -Destination $dst -Force }
+        if ($env:WSL_SELF -and [IO.Path]::GetFullPath($env:WSL_SELF) -eq [IO.Path]::GetFullPath($p)) { Remove-WhenClosed $p (Get-FileSha256 $p).ToUpper() }
+        else { Remove-Item -LiteralPath $p -Force }
+        $renamed[[IO.Path]::GetFullPath($p)] = $dst
+        Say (L "  Launcher renamed: $(Split-Path $p -Leaf) -> $NEW_BAT ($dir)" "  Launcher renommé : $(Split-Path $p -Leaf) -> $NEW_BAT ($dir)")
+    }
+    $kitDirFull = $null
     if ($KitDir -and (Test-Path -LiteralPath $KitDir -PathType Container)) {
         $dir = (Resolve-Path -LiteralPath $KitDir).Path.TrimEnd('\')
         if ($dir -ne $clone) {
-            foreach ($old in $OLD_BATS) {
-                $p = Join-Path $dir $old
-                if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { continue }
-                if ((Get-FileSha256 $p) -ne $want) { Log "launcher file kept (not the new file): $p"; continue }
-                try {
-                    $dst = Join-Path $dir $NEW_BAT
-                    if (-not (Test-Path -LiteralPath $dst -PathType Leaf) -or (Get-FileSha256 $dst) -ne $want) { Copy-Item -LiteralPath $new -Destination $dst -Force }
-                    if ($env:WSL_SELF -and [IO.Path]::GetFullPath($env:WSL_SELF) -eq [IO.Path]::GetFullPath($p)) { Remove-WhenClosed $p $want }
-                    else { Remove-Item -LiteralPath $p -Force }
-                    Say (L "  Launcher renamed: $old -> $NEW_BAT ($dir)" "  Launcher renommé : $old -> $NEW_BAT ($dir)")
-                } catch { Log "launcher file not renamed: $p ($($_.Exception.Message))" }
+            $kitDirFull = $dir
+            $newLen = (Get-Item -LiteralPath $new).Length
+            foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Filter '*.bat' -ErrorAction SilentlyContinue)) {
+                if ($f.Name -eq $NEW_BAT) { continue }
+                if ($OLD_BATS -notcontains $f.Name -and $f.Length -ne $newLen) { continue }
+                if ((Get-FileSha256 $f.FullName) -ne $want) { if ($OLD_BATS -contains $f.Name) { Log "launcher file kept (not the new file): $($f.FullName)" }; continue }
+                try { & $rename $f.FullName $dir } catch { Log "launcher file not renamed: $($f.FullName) ($($_.Exception.Message))" }
             }
         }
     }
+    foreach ($dir in @(@($Desktop, $Downloads) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) })) {
+        $dir = (Resolve-Path -LiteralPath $dir).Path.TrimEnd('\')
+        if ($dir -eq $clone -or $dir -eq $kitDirFull) { continue }
+        foreach ($old in $OLD_BATS) {
+            $p = Join-Path $dir $old
+            if (-not (Test-Path -LiteralPath $p -PathType Leaf) -or (Get-Item -LiteralPath $p).Length -gt 1MB) { continue }
+            $text = [IO.File]::ReadAllText($p)
+            if ($text -notmatch '#@@BEGIN boot\.ps1' -or $text -notmatch 'WindowSmashLauncher') { Log "launcher file kept (not a launcher): $p"; continue }
+            try { & $rename $p $dir } catch { Log "launcher file not renamed: $p ($($_.Exception.Message))" }
+        }
+    }
     $sh = New-Object -ComObject WScript.Shell
+    $programs = [Environment]::GetFolderPath('Programs')
+    if ($renamed.Count) {      # the player's own shortcuts to a renamed file
+        $lnks = @(foreach ($d in @($Desktop, $TaskbarPins)) { if ($d -and (Test-Path -LiteralPath $d)) { Get-ChildItem -LiteralPath $d -Filter '*.lnk' -File -ErrorAction SilentlyContinue } }) +
+                @(if ($programs -and (Test-Path -LiteralPath $programs)) { Get-ChildItem -LiteralPath $programs -Filter '*.lnk' -File -Recurse -ErrorAction SilentlyContinue })
+        foreach ($l in $lnks) {
+            try {
+                $s = $sh.CreateShortcut($l.FullName)
+                $t = if ($s.TargetPath) { try { [IO.Path]::GetFullPath($s.TargetPath) } catch { $s.TargetPath } } else { '' }
+                $hit = $renamed.Keys | Where-Object { $_ -eq $t -or ($s.Arguments -and $s.Arguments.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0) } | Select-Object -First 1
+                if (-not $hit) { continue }
+                if ($hit -eq $t) { $s.TargetPath = $renamed[$hit] }
+                else { $s.Arguments = [regex]::Replace($s.Arguments, [regex]::Escape($hit), $renamed[$hit].Replace('$', '$$'), 'IgnoreCase') }
+                $s.Save()
+                Log "shortcut $($l.FullName): $hit -> $($renamed[$hit])"
+            } catch { Log "shortcut not updated: $($l.FullName) ($($_.Exception.Message))" }
+        }
+    }
     $cloneOld = @($OLD_BATS | ForEach-Object { Join-Path $clone $_ })
     $icon = $null; $rr = Get-RememberedRepo      # (the play shortcut's icon: the game's, never the old OpenSmash's that goes)
     if ($rr -and (Test-Path -LiteralPath (Join-Path $rr 'build\ssbu.exe'))) { $icon = (Join-Path $rr 'build\ssbu.exe') + ',0' }
-    $moved = 0
-    foreach ($d in @($Desktop, [Environment]::GetFolderPath('Programs'))) {
+    $os = Get-OldOpenSmash
+    $moved = 0; $movedStart = 0
+    foreach ($d in @($Desktop, $programs)) {
         if (-not $d -or -not (Test-Path -LiteralPath $d)) { continue }
         foreach ($o in $OLD_LNKS) {
             $p = Join-Path $d $o[0]
@@ -1549,16 +1765,18 @@ function Update-LauncherFiles {
                 $n = $sh.CreateShortcut((Join-Path $d $name))
                 $n.TargetPath = $new; $n.WorkingDirectory = $clone
                 if ($o[1]) { $n.Arguments = 'play' }
+                $oldIcon = $old.IconLocation -replace ',-?\d+$', ''
                 if ($o[1] -and $icon) { $n.IconLocation = $icon }
-                elseif ($old.IconLocation -and $old.IconLocation -notmatch '^,') { $n.IconLocation = $old.IconLocation }
+                elseif ($oldIcon -and -not ($os -and ((Test-Under $oldIcon $os.Repo) -or (Test-Under $oldIcon $os.Build)))) { $n.IconLocation = $old.IconLocation }
                 $n.Save()
                 Remove-Item -LiteralPath $p -Force
                 Log "shortcut $p -> $name"
-                $moved++
+                $moved++; if ($d -eq $programs) { $movedStart++ }
             } catch { Log "shortcut not moved: $p ($($_.Exception.Message))" }
         }
     }
     if ($moved) { Say (L "  Shortcuts renamed: 'Smash Ultimate (OpenSmash Ultimate)' and 'OpenSmash Ultimate Launcher'." "  Raccourcis renommés : 'Smash Ultimate (OpenSmash Ultimate)' et 'OpenSmash Ultimate Launcher'.") }
+    if ($movedStart) { Say (L '  (a tile pinned to Start under the old name is gone: pin the new one again from the Start menu)' '  (une vignette épinglée sur Démarrer sous l''ancien nom a disparu : épingle à nouveau la nouvelle depuis le menu Démarrer)') }
 }
 
 # ---- main ------------------------------------------------------------------------------------
@@ -1576,6 +1794,8 @@ try {
     if (-not $KitDir) { $KitDir = (Get-Location).Path }
     if ($KitDir.Length -gt 3) { $KitDir = $KitDir.TrimEnd('\') }
     try { Update-LauncherFiles } catch { Log "launcher files: $($_.Exception.Message)" }
+    if ($Mode -eq 'play-norollback') { $Mode = 'play' }       # (the OpenSmash launcher's name for it)
+    if ($Mode -and $Mode -notin 'install', 'play', 'play-rollback', 'diag', 'unlock', 'optimize', 'dlc') { Log "mode '$Mode' unknown (an old launcher's): the menu"; $Mode = '' }
     while (-not $Mode) {
         Write-Host ''
         Write-Host (L '  1) Install / update' '  1) Installer / mettre à jour')
@@ -1591,7 +1811,6 @@ try {
         $Mode = @{ '2' = 'play'; '3' = 'play-rollback'; '4' = 'diag'; '5' = 'unlock'; '6' = 'optimize'; '7' = 'dlc' }[$m]
         if (-not $Mode) { $Mode = 'install' }
     }
-    if ($Mode -eq 'play-norollback') { $Mode = 'play' }       # (the OpenSmash launcher's name for it)
     $Script:Rollback = ($Mode -eq 'play-rollback')
     if ($Script:Rollback) { $Mode = 'play' }
     Probe-System
@@ -1604,26 +1823,36 @@ try {
                 Say (L '  your OpenSmash with a new install (1 to 3 hours; your save and the game files you gave come over).' '  ton OpenSmash par une nouvelle installation (1 à 3 heures ; ta sauvegarde et les fichiers du jeu déjà donnés sont repris).')
                 if (Ask-YesNo (L '  Install OpenSmash Ultimate now?' '  J''installe OpenSmash Ultimate maintenant ?')) { $Mode = 'install' }
                 else { Say (L '  Later: choose 1) Install. The old OpenSmash no longer plays online with the group.' '  Plus tard : choisis 1) Installer. L''ancien OpenSmash ne joue plus en ligne avec le groupe.'); Read-Host (L 'Enter to close' 'Entrée pour fermer'); exit 0 }
-            } else { Say (L '  The game is not installed yet: choose 1) Install.' '  Le jeu n''est pas encore installé : choisis 1) Installer.'); Read-Host (L 'Enter to close' 'Entrée pour fermer'); exit 1 }
+            } elseif ($Script:Repo) {      # (the folder is there, its game not built yet: an install that stopped)
+                Say (L '  The install did not finish: the game is not compiled yet.' '  L''installation n''est pas finie : le jeu n''est pas encore compilé.')
+                if (Ask-YesNo (L '  Carry on with the install now? (it resumes where it was)' '  Je reprends l''installation maintenant ? (elle reprend où elle en était)')) { $Mode = 'install' }
+                else { Say (L '  Later: choose 1) Install.' '  Plus tard : choisis 1) Installer.'); Read-Host (L 'Enter to close' 'Entrée pour fermer'); exit 0 }
+            } else { Say (L '  The game is not installed yet: choose 1) Install.' '  Le jeu n''est pas encore installé : choisis 1) Installer.'); Read-Host (L 'Enter to close' 'Entrée pour fermer'); exit 0 }
         } else {
-            $g = Find-Git
-            $isGit = $g -and (Test-Path -LiteralPath (Join-Path $Script:Repo '.git'))
-            if ($isGit) { Set-GitSafeRepo }
-            $head = if ($isGit) { (Run-Native { & $g -C $Script:Repo rev-parse HEAD }) | Select-Object -First 1 } else { $null }
-            if ($head -and $head -ne $WS_COMMIT) {
-                $url = "$(@(Run-Native { & $g -C $Script:Repo remote get-url origin 2>$null }) | Select-Object -First 1)".Trim()
+            # A new pinned version (a git HEAD or, for a copy without git, the files the kit checks), or the last update
+            # stopped between its checkout and its compile: either way the game is not the group's and an update is offered.
+            $ver = Get-RepoVersion
+            $offer = $false
+            if ($ver -and $ver -ne $WS_COMMIT) {
+                $g = Find-Git
+                $url = if ($g -and (Test-Path -LiteralPath (Join-Path $Script:Repo '.git'))) { "$(@(Run-Native { & $g -C $Script:Repo remote get-url origin 2>$null }) | Select-Object -First 1)".Trim() } else { '' }
                 if ($url -match $WS_OLD_URL) {
                     Say (L '  WindowSmash and OpenSmash are now one project, OpenSmash Ultimate, and the group moves to it: your' '  WindowSmash et OpenSmash sont maintenant un seul projet, OpenSmash Ultimate, et le groupe passe dessus : ton')
                     Say (L "  WindowSmash folder becomes OpenSmash Ultimate ($($WS_COMMIT.Substring(0,7))), your save and settings kept. To play online, you need it." "  dossier WindowSmash devient OpenSmash Ultimate ($($WS_COMMIT.Substring(0,7))), sauvegarde et réglages gardés. Pour jouer en ligne, il le faut.")
                 } else {
-                    Say (L "  New OpenSmash Ultimate version ($($head.Substring(0,7)) -> $($WS_COMMIT.Substring(0,7))): to play online, you need the same as your friends." "  Nouvelle version d'OpenSmash Ultimate ($($head.Substring(0,7)) -> $($WS_COMMIT.Substring(0,7))) : pour jouer en ligne, il faut la même que tes amis.")
+                    $from = if ($ver -match '^[0-9a-f]{40}$') { "$($ver.Substring(0,7)) -> " } else { '' }
+                    Say (L "  New OpenSmash Ultimate version ($from$($WS_COMMIT.Substring(0,7))): to play online, you need the same as your friends." "  Nouvelle version d'OpenSmash Ultimate ($from$($WS_COMMIT.Substring(0,7))) : pour jouer en ligne, il faut la même que tes amis.")
                 }
                 if (-not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) {   # (from kit 2.x's 13.0.4)
                     Say (L "  It needs the game's $EXPECT_VERSION update, dumped from your up-to-date Switch. If you don't have it yet," "  Elle demande la mise à jour $EXPECT_VERSION du jeu, dumpée de ta Switch à jour. Si tu ne l'as pas encore,")
                     Say (L '  answer n: the current game stays playable meanwhile.' '  réponds n : le jeu actuel reste jouable en attendant.')
                 }
-                if (Ask-YesNo (L '  Update now? (recompile: 20 min to 2 h depending on the version and the PC)' '  Je fais la mise à jour maintenant ? (recompilation : 20 min à 2 h selon la version et le PC)')) { $Mode = 'install' }
+                $offer = $true
+            } elseif ($ver -eq $WS_COMMIT -and -not (Test-BuildCurrent $ver)) {
+                Say (L "  The last update stopped before the game was compiled: the game is still the old one, which does not play online with the others." "  La dernière mise à jour s'est arrêtée avant la compilation du jeu : le jeu est encore l'ancien, qui ne joue pas en ligne avec les autres.")
+                $offer = $true
             }
+            if ($offer -and (Ask-YesNo (L '  Update now? (recompile: 20 min to 2 h depending on the version and the PC)' '  Je fais la mise à jour maintenant ? (recompilation : 20 min à 2 h selon la version et le PC)'))) { $Mode = 'install' }
         }
         if ($Mode -eq 'play') { Start-Game $Script:Rollback; exit 0 }
     }
@@ -1658,12 +1887,14 @@ try {
         Set-Step 'Disk' 'FAILED' "$freeGB GB"; Fail 'E22' (L "$freeGB GB free, about $NEED_GB are needed" "$freeGB Go libres, il en faut environ $NEED_GB")
     }
     Stop-Test 'repo'
-    # Coming from kit 2.x's 13.0.4: the 13.0.5 update is asked and checked while WindowSmash is still at the version
-    # that plays 13.0.4, so that a player without it yet (no file chosen, a wrong one) keeps a game that starts.
+    # Coming from kit 2.x's 13.0.4, or updating a game built already: the game files are asked and checked while the
+    # folder is still at the version its game was built from, so that a player who stops there (no file chosen, a wrong
+    # one, the 13.0.5 update not dumped yet) keeps a game that starts and still matches its folder.
     $venv = Join-Path $Script:Repo '.venv\Scripts\python.exe'
-    $migrating = (Test-Path -LiteralPath (Join-Path $Script:Repo "$OLD_TREE\build\ssbu.exe")) -and
-                 -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe')) -and (Test-Path -LiteralPath $venv)
-    if ($migrating) { $Script:VenvPy = $venv; Ask-Inputs; Check-Inputs }
+    $builtNow = Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe')
+    $migrating = (Test-Path -LiteralPath (Join-Path $Script:Repo "$OLD_TREE\build\ssbu.exe")) -and -not $builtNow -and (Test-Path -LiteralPath $venv)
+    $early = ($migrating -or $builtNow) -and (Test-Path -LiteralPath $venv)
+    if ($early) { $Script:VenvPy = $venv; Ask-Inputs; Check-Inputs }
     Ensure-Revision
     Stop-Test 'revision'
     Ensure-Python
@@ -1671,7 +1902,7 @@ try {
     Ensure-LLVM
     Test-Toolchain
     Stop-Test 'tools'
-    if (-not $migrating) { Ask-Inputs; Check-Inputs }
+    if (-not $early) { Ask-Inputs; Check-Inputs }
     Prepare-Base
     Prepare-Fonts
     Ensure-Opus

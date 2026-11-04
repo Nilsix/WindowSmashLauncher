@@ -12,12 +12,16 @@ aucun fichier du jeu, aucune clé, aucun firmware.
 
 - Windows 10 ou 11, 64 bits.
 - Un processeur avec AVX2 (la plupart des PC depuis 2015) et une carte graphique compatible Direct3D 11.
-- Environ **35 Go libres** sur un disque qui n'est pas dans OneDrive, et 16 Go de RAM conseillés.
+- Environ **35 Go libres** sur un disque qui n'est pas dans OneDrive (de préférence un SSD interne : le jeu lit ses
+  données et ses shaders pendant qu'il tourne, un disque dur USB le fait saccader), et 16 Go de RAM conseillés.
 - Internet (téléchargement des outils : Git, Python, outils Microsoft, compilateur).
 - **Tes fichiers**, dumpés de ta Switch :
   - le jeu de base Smash Ultimate **1.0.0** (`.xci` ou `.nsp`) ;
   - la mise à jour **13.0.5** (`.nsp`) : OpenSmash Ultimate ne marche qu'avec cette version ;
-  - ton fichier **`prod.keys`** (Lockpick_RCM).
+  - ton fichier **`prod.keys`** (Lockpick_RCM) ;
+  - facultatif : le **firmware** de ta console (dossier de fichiers `.nca`), pour les polices d'origine du jeu. Sans
+    lui, des polices libres les remplacent (autres polices pour le texte latin, pas de texte chinois, japonais ou
+    coréen) ; les combats ne changent pas.
 
 ## Installation
 
@@ -27,7 +31,8 @@ aucun fichier du jeu, aucune clé, aucun firmware.
 2. Double-clique dessus. Si Windows affiche « Windows a protégé votre ordinateur » : « Informations
    complémentaires », puis « Exécuter quand même ».
 3. Choisis **1) Installer**, réponds **O** pour installer les outils qui manquent, accepte les fenêtres
-   administrateur, choisis où installer, puis donne tes fichiers quand il les demande.
+   administrateur, choisis où installer (il propose un SSD interne quand il y a la place), puis donne tes fichiers
+   quand il les demande.
 
 Compte **1 h 30 à 4 h** selon le PC (la compilation du jeu est longue, et la précompilation des shaders peut
 prendre jusqu'à 2 h). Ferme les jeux et les gros programmes pendant ce temps. Tu peux fermer la fenêtre et
