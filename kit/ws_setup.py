@@ -14,8 +14,12 @@ with the repository's own Python environment.
                                             folder of firmware NCAs (a dump, yuzu/suyu nand, Ryujinx bis)
   install   --update NSP --keys DIR --jobs N [--dlc DIR] [--no-build]
                                             the game built in the WindowSmash folder by its tools/build_game.py,
-                                            from the decrypted base (plain-nca) and the 13.0.5 update (below)
-  status                                    the game's state in the WindowSmash folder, for the report
+                                            from the decrypted base (plain-nca) and the 13.0.5 update (below);
+                                            --dlc: then the DLC listed as `dlc` does
+  dlc       --dir DIR [--keys DIR]          the DLC in DIR listed in dump/modules/aoc.cfg, the list the game reads:
+                                            their ids from the file names as dumped (as the OpenSmash launcher did),
+                                            and from the packages' metadata where prod.keys opens them
+  status                                   the game's state in the WindowSmash folder, for the report
   unlock    [--dry-run]                     every fighter unlocked in the save (tools/unlock_all.py)
   shaders   [--jobs N]                      the game's shaders compiled ahead of time (tools/shader_aot.py)
 
@@ -572,6 +576,12 @@ def place_file(src, stage, folder, copies):
     if os.path.lexists(dst):
         if os.path.isfile(dst) and (os.path.samefile(src, dst) or (name in copies and same_stamp(src, dst))):
             return name
+        if os.path.isfile(dst) and not os.path.islink(dst) and same_stamp(src, dst):
+            # a plain copy of the very file (same size and time: the game folder copied or moved to another disk, which
+            # turns the hard link into a copy): kept, and from now on the kit's own, instead of stopping the run (E53)
+            copies.add(name)
+            print(L(f"  {name}: a copy of your file, kept", f"  {name}: une copie de ton fichier, gardee"), flush=True)
+            return name
         remove_entry(stage, name, copies)
     try:
         os.link(src, dst)
@@ -595,33 +605,11 @@ def place_file(src, stage, folder, copies):
     return name
 
 
-def place_dir(src, stage, name, copies):
-    """A folder (the DLC) into the game folder as `name`: a junction; else, on a disk without junctions, a copy of its
-    .nsp and .nca files (DLC packages are small)."""
-    dst = os.path.join(stage, name)
-    if os.path.lexists(dst):
-        remove_entry(stage, name, copies)
-    try:
-        make_junction(dst, src)
-        return name
-    except Problem:
-        pass
-    copies.add(name)
-    os.makedirs(dst)
-    n = 0
-    for dp, _dirs, files in os.walk(src):
-        for f in files:
-            if f.lower().endswith((".nsp", ".nca")):
-                shutil.copy2(os.path.join(dp, f), os.path.join(dst, f))
-                n += 1
-    print(L(f"  {n} DLC files copied into dump\\game_files\\{name} (this disk has no links)", f"  {n} fichiers de DLC copies dans dump\\game_files\\{name} (ce disque ne fait pas de liens)"), flush=True)
-    return name
-
-
-def stage_game_files(repo, update, dlc):
+def stage_game_files(repo, update):
     """dump\\game_files, the game folder build_game.py reads: the decrypted base (which lives there, or a hard link to
-    kit 3.0/3.1's copy), the update and the DLC folder (see place_file, place_dir). What last time left and this time
-    does not use goes, never going into what a link points to (remove_entry)."""
+    kit 3.0/3.1's copy) and the update (see place_file). What last time left and this time does not use goes, never
+    going into what a link points to (remove_entry): kits 3.0-4.1's dlc\\ (a junction to the player's DLC folder) too,
+    the DLC being listed by the kit itself since kit 4.2 (write_aoc_cfg)."""
     stage = os.path.join(repo, STAGE)
     os.makedirs(stage, exist_ok=True)
     copies = read_copies(stage)
@@ -629,8 +617,6 @@ def stage_game_files(repo, update, dlc):
     keep = {"program_v0.nca", COPIES}
     try:
         keep.add(place_file(os.path.abspath(update), stage, "update", copies))
-        if dlc:
-            keep.add(place_dir(os.path.abspath(dlc), stage, "dlc", copies))
         for n in os.listdir(stage):
             if n not in keep:
                 remove_entry(stage, n, copies)
@@ -683,23 +669,275 @@ def seed_from_old_tree(repo):
             print(L(f"  {moved} modules taken from {tree}\\build (the same in 13.0.5: not compiled again)", f"  {moved} modules repris de {tree}\\build (identiques en 13.0.5 : pas recompiles)"), flush=True)
 
 
+# ---- the DLC ------------------------------------------------------------------------------------
+# The game asks which add-on contents are there and gets the indices listed in dump/modules/aoc.cfg (the runtime's
+# hle_env.c aoc_load: one index per line, the first number of the line; "#" lines skipped). The DLC fighters, stages
+# and outfits are data of the 13.0.5 update already: a DLC package only unlocks its content and the game never reads
+# it. So, as the OpenSmash launcher did (ssbu-recomp's scripts/install.py step 7, tools/audit/dlc_list.py), each DLC's id
+# is read from its name as dumped ("... [01006A800016F041][v0].nsp", nxdumptool, DBI; "01006A800016F041_v0.nsp"
+# too; a folder named so as well): no key, ticket or title key is needed, and a .nsz counts as well. The packages' own
+# metadata (their .cnmt, read as build_game.py's step 7 does with tools/nca.py; an emulator's registered NCAs too) adds a
+# renamed one where prod.keys opens it; one it cannot open is no error. A folder given later adds its DLC to the list
+# (install.py merged its dlc.txt the same way). Kits 3.0-4.1 gave the folder to build_game.py's step 7 instead, which
+# reads the metadata only: a package it could not open was not counted, and then no DLC at all ("no Smash Ultimate DLC
+# recognised"). Since kit 4.2 build_game.py gets no dlc folder (it keeps the aoc.cfg it finds) and the kit writes the
+# list, again after each build_game.py run.
+AOC_BASE = SSBU_BASE + 0x1000      # an add-on content's id = the application's + 0x1000 + its index
+DLC_EXTS = (".nsp", ".nsz", ".xci", ".xcz", ".nca", ".ncz")
+TITLE_ID = re.compile(r"(?<![0-9A-Fa-f])([0-9A-Fa-f]{16})(?![0-9A-Fa-f])")   # (an NCA's name is 32 hex digits: not one)
+AOC_CFG = os.path.join("dump", "modules", "aoc.cfg")
+AOC_NONE = os.path.join("dump", "modules", "aoc.none")
+
+
+def aoc_index(title):
+    i = title - AOC_BASE
+    return i if 0 < i < 0x1000 else None
+
+
+def dlc_files(folder):
+    """The package files under `folder` (its subfolders too), in name order."""
+    for dp, dirs, files in os.walk(folder):
+        dirs.sort()
+        for f in sorted(files):
+            if f.lower().endswith(DLC_EXTS):
+                yield os.path.join(dp, f)
+
+
+def dlc_names(folder):
+    """The names a DLC id is read from, as the OpenSmash launcher read them: every entry of `folder` itself (a file of
+    any kind or a folder, such as an extracted dump), and below it the package files and the folder names."""
+    try:
+        top = sorted(os.listdir(folder))
+    except OSError:
+        top = []
+    yield from top
+    for dp, dirs, files in os.walk(folder):
+        dirs.sort()
+        if dp != folder:
+            yield os.path.basename(dp)
+            yield from (f for f in sorted(files) if f.lower().endswith(DLC_EXTS))
+
+
+def dlc_from_names(folder):
+    """index -> (add-on content id, name), from the ids in the names."""
+    rows = {}
+    for name in dlc_names(folder):
+        for m in TITLE_ID.finditer(name):
+            title = int(m.group(1), 16)
+            i = aoc_index(title)
+            if i is not None:
+                rows.setdefault(i, (title, name))
+    return rows
+
+
+def dlc_from_metadata(repo, folder, keys):
+    """index -> (add-on content id, file name), from the AddOnContent metadata of the packages prod.keys opens (any
+    failure, the repository's tools/nca.py included, only leaves this list shorter)."""
+    rows = {}
+    try:
+        t = os.path.join(repo, "tools")
+        if t not in sys.path:
+            sys.path.insert(0, t)
+        import nca
+    except Exception:   # noqa: BLE001
+        return rows
+    for path in dlc_files(folder):
+        if not path.lower().endswith((".nsp", ".xci", ".nca")):
+            continue
+        try:
+            # (a lone NCA, as an emulator's nand\user\Contents\registered keeps them, is named by its content id with no
+            # ".cnmt": it is opened itself, as nca.py aoc-cfg does, and only a metadata one counts)
+            ncas = ([(os.path.basename(path), nca.Nca(path, keys))] if path.lower().endswith(".nca")
+                    else nca.nsp_ncas(path, keys, ".cnmt.nca"))
+            for _name, n in ncas:
+                if n.content_type != 1:
+                    continue
+                sec = n.section(1)
+                for name, off, size in nca.pfs0_entries(sec):
+                    if not name.endswith(".cnmt"):
+                        continue
+                    cnmt = sec.read(off, size)
+                    title, _version, kind = struct.unpack_from("<QIB", cnmt, 0)
+                    owner, = struct.unpack_from("<Q", cnmt, 0x20)
+                    i = aoc_index(title) if kind == 0x82 and owner == SSBU_BASE else None
+                    if i is not None:
+                        rows.setdefault(i, (title, os.path.basename(path)))
+        except (Exception, SystemExit):   # noqa: BLE001 - under a key prod.keys lacks, compressed, not a package...
+            continue
+    return rows
+
+
+AOC_KIT = "(OpenSmash Ultimate Launcher, kit ws_setup.py dlc)"
+
+
+def kit_aoc_rows(repo):
+    """index -> (title, name, how) of the aoc.cfg the kit wrote before (its header says so); {} for any other list,
+    such as build_game.py's, or none."""
+    rows = {}
+    try:
+        with open(os.path.join(repo, AOC_CFG), encoding="ascii", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return rows
+    if not lines or AOC_KIT not in lines[0]:
+        return rows
+    for line in lines[1:]:
+        m = re.match(r"(\d+) ([0-9A-F]{16}) ([^:]+): ?(.*)$", line)
+        if m and aoc_index(int(m.group(2), 16)) == int(m.group(1)):
+            rows[int(m.group(1))] = (int(m.group(2), 16), m.group(4), m.group(3))
+    return rows
+
+
+def write_aoc_cfg(repo, folder, keys, quiet=False):
+    """dump/modules/aoc.cfg: the DLC in `folder` added to the ones the kit listed before (as the OpenSmash launcher's
+    install.py added a folder to its dlc.txt); the number recognised in `folder` and the number listed. With none
+    recognised, the list there stays as it is and (0, 0) comes back."""
+    rows = {i: (t, n, "file name") for i, (t, n) in dlc_from_names(folder).items()}
+    if keys:
+        for i, (t, n) in dlc_from_metadata(repo, folder, keys).items():
+            rows.setdefault(i, (t, n, "metadata"))
+    if not rows:
+        return 0, 0
+    found = set(rows)
+    rows = {**kit_aoc_rows(repo), **rows}
+    out_path = os.path.join(repo, AOC_CFG)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path + ".part", "w", encoding="ascii", errors="replace", newline="\n") as f:
+        # (the runtime reads lines of at most 255 bytes: a longer one would be read in pieces, so each stays short)
+        f.write(f"# add-on content of {SSBU_BASE:016X}: <index> <title id> {AOC_KIT}\n")
+        for i in sorted(rows):
+            t, n, how = rows[i]
+            f.write(f"{i} {t:016X} {how}: {n[:120]}\n")
+    os.replace(out_path + ".part", out_path)
+    if os.path.exists(os.path.join(repo, AOC_NONE)):   # (build_game.py's "no DLC found", from before)
+        os.remove(os.path.join(repo, AOC_NONE))
+    if not quiet:
+        for i in sorted(rows):
+            print(f"  {i:4d}  {rows[i][0]:016X}  {rows[i][1]}{'' if i in found else L('  (listed before)', '  (deja liste)')}",
+                  flush=True)
+    return len(found), len(rows)
+
+
+def drop_staged_dlc(repo):
+    """Kits 3.0-4.1's dump/game_files/dlc (a junction to the player's DLC folder, or the kit's copy of it): with it,
+    build_game.py would read the DLC again at a build and write its own aoc.cfg over the kit's. Only the link goes."""
+    stage = os.path.join(repo, STAGE)
+    if not os.path.lexists(os.path.join(stage, "dlc")):
+        return
+    copies = read_copies(stage)
+    try:
+        remove_entry(stage, "dlc", copies)
+    except Problem as p:
+        out("WARN", f"W54 {p.text}")
+    finally:
+        write_copies(stage, copies)
+
+
+def dlc_none_text(folder):
+    seen = [os.path.basename(p) for p in dlc_files(folder)]
+    if not seen:
+        return L(f"no DLC file (.nsp, .nsz) in {folder}", f"aucun fichier de DLC (.nsp, .nsz) dans {folder}")
+    shown = ", ".join(seen[:3]) + (", ..." if len(seen) > 3 else "")
+    return L(f"none of the {len(seen)} file(s) in {folder} is a Smash Ultimate DLC ({shown}): give them back their names "
+             "as dumped, with the DLC id in them (01006A800016Fxxx)",
+             f"aucun des {len(seen)} fichier(s) de {folder} n'est un DLC de Smash Ultimate ({shown}) : redonne-leur leur nom "
+             "de dump, avec l'identifiant du DLC dedans (01006A800016Fxxx)")
+
+
+def in_stage(repo, folder):
+    """Whether `folder` is the kit's own dump/game_files or lies in it (a junction followed): kits 3.0-4.1 put a DLC
+    link or copy there, which the kit removes."""
+    stage = os.path.normcase(os.path.realpath(os.path.join(repo, STAGE)))
+    f = os.path.normcase(os.path.realpath(folder))
+    return f == stage or f.startswith(stage + os.sep) or os.path.normcase(os.path.abspath(folder)).startswith(
+        os.path.normcase(os.path.abspath(os.path.join(repo, STAGE))) + os.sep)
+
+
+def own_folder_text(folder):
+    return L(f"{folder} is the launcher's own folder, not yours: choose the folder of your DLC dumps",
+             f"{folder} est le dossier du launcher, pas le tien : choisis le dossier de tes dumps de DLC")
+
+
+def cmd_dlc(a):
+    folder = os.path.abspath(a.dir)
+    if not os.path.isdir(folder):
+        raise Problem("E54", L(f"{folder}: folder not found", f"{folder}: dossier introuvable"))
+    if in_stage(a.repo, folder):
+        raise Problem("E54", own_folder_text(folder))
+    drop_staged_dlc(a.repo)
+    found, n = write_aoc_cfg(a.repo, folder, a.keys)
+    if not found:
+        raise Problem("E54", dlc_none_text(folder))
+    print(L(f"{found} DLC recognised in {folder}, {n} in the list", f"{found} DLC reconnus dans {folder}, {n} dans la liste"),
+          flush=True)
+    out("DLC", f"{n}")
+
+
+def install_dlc(a, quiet=False):
+    """The DLC folder given to `install`: listed after build_game.py (whose step 7 keeps the list there). A folder gone
+    or with no DLC is a warning: the game is built all the same, with the list it had."""
+    folder = os.path.abspath(a.dlc)
+    found, n = write_aoc_cfg(a.repo, folder, a.keys, quiet) if os.path.isdir(folder) else (0, 0)
+    if found:
+        out("DLC", f"{n}")
+    elif not quiet:
+        why = dlc_none_text(folder) if os.path.isdir(folder) else L(f"{folder}: folder not found", f"{folder}: dossier introuvable")
+        out("WARN", f"W54 DLC: {why}")
+
+
 def cmd_install(a):
     tools(a.repo)
     os.chdir(a.repo)
+    if a.dlc and in_stage(a.repo, a.dlc):
+        out("WARN", f"W54 DLC: {own_folder_text(os.path.abspath(a.dlc))}")
+        a.dlc = None
     migrate_version_folders(a.repo)
     drop_base_only_cfg(a.repo)
-    if a.dlc:   # (a DLC folder given now: build_game.py's step 7 reads it again, whatever it found before)
-        for n in ("aoc.cfg", "aoc.none"):
-            if os.path.exists(os.path.join(a.repo, "dump", "modules", n)):
-                os.remove(os.path.join(a.repo, "dump", "modules", n))
-    stage = stage_game_files(a.repo, a.update, a.dlc)
+    stage = stage_game_files(a.repo, a.update)
     cmd = [sys.executable, "-u", os.path.join("tools", "build_game.py"), "--game", stage, "--keys", a.keys,
            "--jobs", str(a.jobs)]
-    # the game files first (steps 1 to 8), then the modules a 13.0.4 build already compiled, then the build
-    run_build_game(cmd + ["--prepare-only"])
+    # The game files first (steps 1 to 8), then the modules a 13.0.4 build already compiled, then the build. Step 7
+    # rewrites aoc.cfg when the game folder shows it DLC (an update folder linked from a disk where DLC lie next to
+    # it): the kit's list goes back after each run, a failed one too.
+    snap = kit_aoc_bytes(a.repo)
+    try:
+        run_build_game(cmd + ["--prepare-only"])
+    finally:
+        restore_dlc(a, snap)
     if not a.no_build:
         seed_from_old_tree(a.repo)
-        run_build_game(cmd)
+        snap = kit_aoc_bytes(a.repo)
+        try:
+            run_build_game(cmd)
+        finally:
+            restore_dlc(a, snap, quiet=True)
+
+
+def kit_aoc_bytes(repo):
+    """The aoc.cfg the kit wrote, as it is (None for build_game.py's own list, or none)."""
+    try:
+        with open(os.path.join(repo, AOC_CFG), "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    return data if AOC_KIT.encode() in data.split(b"\n", 1)[0] else None
+
+
+def restore_dlc(a, snap, quiet=False):
+    """After a build_game.py run, which may have failed: the kit's list as it was before the run if build_game.py
+    wrote its own over it, then the DLC folder given added again. A failure here only warns."""
+    try:
+        if snap is not None and kit_aoc_bytes(a.repo) is None:
+            path = os.path.join(a.repo, AOC_CFG)
+            with open(path + ".part", "wb") as f:
+                f.write(snap)
+            os.replace(path + ".part", path)
+            if os.path.exists(os.path.join(a.repo, AOC_NONE)):
+                os.remove(os.path.join(a.repo, AOC_NONE))
+        if a.dlc:
+            install_dlc(a, quiet)
+    except Exception as e:   # noqa: BLE001 - the build's own error, if any, is the one to tell
+        out("WARN", f"W54 DLC: {e}")
 
 
 def run_build_game(cmd):
@@ -816,6 +1054,9 @@ def main():
     p.add_argument("--jobs", type=int, required=True)
     p.add_argument("--dlc")
     p.add_argument("--no-build", action="store_true")
+    p = sub.add_parser("dlc")
+    p.add_argument("--dir", required=True)
+    p.add_argument("--keys")
     sub.add_parser("status")
     p = sub.add_parser("unlock")
     p.add_argument("--dry-run", action="store_true")
@@ -828,7 +1069,7 @@ def main():
         os.makedirs(os.path.dirname(os.path.abspath(a.log)), exist_ok=True)
         sys.stdout = sys.stderr = Tee(sys.__stdout__, a.log)
     run = {"probe": cmd_probe, "keys": cmd_keys, "identify": cmd_identify, "plain-nca": cmd_plain_nca,
-           "fonts": cmd_fonts, "install": cmd_install, "status": cmd_status, "unlock": cmd_unlock,
+           "fonts": cmd_fonts, "install": cmd_install, "dlc": cmd_dlc, "status": cmd_status, "unlock": cmd_unlock,
            "shaders": cmd_shaders}[a.cmd]
     try:
         run(a)

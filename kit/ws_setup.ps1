@@ -22,7 +22,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '4.1 (2026-11-04)'
+$KitVersion = '4.2 (2026-11-04)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
 # (WindowSmash, github.com/OpenSmash-Ultimate/WindowSmash, pinned at 8025b48 by kits 3.x, and OpenSmash merged on
@@ -107,6 +107,7 @@ function Hint([string]$code) {
         'E51' { L "Applying the update failed." "L'application de la mise à jour a échoué." }
         'E52' { L "Extracting the fighter modules failed." "L'extraction des modules de combattants a échoué." }
         'E53' { L "A preparation step failed." "Une étape de préparation a échoué." }
+        'E54' { L "No DLC recognised: choose the folder of the DLC dumped from your Switch (nxdumptool or DBI), the .nsp/.nsz files with their names as dumped: the name holds the DLC id (01006A800016F...)." "Aucun DLC reconnu : choisis le dossier des DLC dumpés de ta Switch (nxdumptool ou DBI), les fichiers .nsp/.nsz avec leur nom de dump : il contient l'identifiant du DLC (01006A800016F...)." }
         'E59' { L "Internal error of the Python script: send the report." "Erreur interne du script Python : envoie le rapport." }
         'E60' { L "The compile failed." "La compilation a échoué." }
         'E61' { L "Making ssbu.exe failed: close the game if it is running, then start again." "La création de ssbu.exe a échoué : ferme le jeu s'il tourne et relance." }
@@ -1047,8 +1048,8 @@ function Ask-Inputs {
         $t = Pick-File (L 'Choose title.keys' 'Choisis title.keys') (L 'title.keys|*.keys;*.txt|All files|*.*' 'title.keys|*.keys;*.txt|Tous les fichiers|*.*') $k
         if ($t) { $Script:Inputs.titlekeys = $t }
     }
-    if (Ask-YesNo (L '  Do you have DLC (fighters) as .nsp files in a folder? (optional; for netplay, have the same ones)' '  As-tu des DLC (combattants) en .nsp dans un dossier ? (optionnel ; pour le netplay, ayez les mêmes)') $false) {
-        $d = Pick-Folder (L 'Choose the folder that holds the DLC (.nsp)' 'Choisis le dossier qui contient les DLC (.nsp)')
+    if (Ask-YesNo (L '  Do you have DLC (fighters) as .nsp/.nsz files in a folder? (optional; for netplay, have the same ones)' '  As-tu des DLC (combattants) en .nsp/.nsz dans un dossier ? (optionnel ; pour le netplay, ayez les mêmes)') $false) {
+        $d = Pick-Folder (L 'Choose the folder that holds the DLC (.nsp/.nsz, named as dumped)' 'Choisis le dossier qui contient les DLC (.nsp/.nsz, avec leur nom de dump)')
         if ($d) { $Script:Inputs.dlc = $d }
     }
     Save-Inputs
@@ -1246,6 +1247,11 @@ function Build-Game([string]$Label = (L "$EXPECT_VERSION update and compile of t
         Set-Step 'Compilation' 'FAILED' "$c"
         Fail $c $t
     }
+    if ($Script:Inputs.dlc) {      # (the DLC folder: listed by ws_setup.py after build_game.py, see Add-DLC)
+        $n = Get-DlcCount $r
+        $Script:Info['DLC'] = "$n in $($Script:Inputs.dlc)"
+        if ($n) { Ok (L "$n DLC listed" "$n DLC listés"); Set-Step 'DLC' 'OK' "$n" } else { Set-Step 'DLC' 'SKIPPED' 'none recognised' }
+    }
     $exe = Join-Path $Script:Repo 'build\ssbu.exe'
     if ($env:WS_NO_BUILD) { Set-Step 'Compilation' 'TEST' 'skipped (WS_NO_BUILD)'; return }
     if (-not (Test-Path -LiteralPath $exe)) { Set-Step 'Compilation' 'FAILED' 'no exe'; Fail 'E62' (L "$exe not found" "$exe introuvable") }
@@ -1431,40 +1437,49 @@ function Unlock-Fighters([bool]$auto = $false) {
     Set-Step 'Unlock' 'OK'
 }
 
-# The DLC a player bought, dumped from their own Switch (nxdumptool: .nsp files): their folder goes to the build as the
-# game folder's dlc\, and build_game.py's step 7 lists them in dump\modules\aoc.cfg, which the game reads. The fighters'
-# code is in every 13.0.5 build already (data.arc holds it), so nothing is compiled again. Only the DLC in the folder
-# count: nothing here unlocks one that isn't there.
+# The DLC a player bought, dumped from their own Switch. As the OpenSmash launcher did, each DLC's id is read from its
+# file name as dumped ("... [01006A800016F041][v0].nsp": nxdumptool, DBI; .nsz too) and the DLC are listed in
+# dump\modules\aoc.cfg, which the game reads at its start (ws_setup.py dlc; the packages' metadata adds a renamed one
+# where prod.keys opens it). No key, ticket or update is needed and nothing is compiled: the DLC's fighters, stages and
+# outfits are in every 13.0.5 build already (data.arc). Kits 3.0-4.1 rebuilt the game and had build_game.py read the
+# packages' metadata only: a dump it could not open counted for nothing ("no Smash Ultimate DLC recognised"). Only the
+# DLC in the folders given count: nothing here unlocks one that isn't there. A second folder adds to the list (as the
+# OpenSmash launcher's did). The last folder is kept in inputs.json, so that a later build lists it again.
 function Add-DLC {
     Title (L 'Add your DLC (dumped from your Switch)' 'Ajouter tes DLC (dumpés de ta Switch)')
     $null = Find-Repo $false
     if (-not $Script:Repo -or -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) { Say (L "  The game is not installed in $EXPECT_VERSION yet: choose 1) Install." "  Le jeu n'est pas encore installé en $EXPECT_VERSION : choisis 1) Installer."); return }
-    if (Get-Process ssbu -ErrorAction SilentlyContinue) { Fail 'E53' (L 'the game is running: close it first' 'le jeu tourne : ferme-le d''abord') }
-    $prev = Load-Inputs
-    $upd = if ($prev -and $prev.update -and (Test-Path -LiteralPath $prev.update) -and $prev.update_version -eq $EXPECT_VERSION) { $prev.update } else { $null }
-    if (-not $upd) { $local = Get-LocalInputs; if ($local) { $upd = $local.update } }      # (the one staged at the build)
-    if (-not $upd) {
-        Fail 'E40' (L "the $EXPECT_VERSION update chosen at the install is not found: choose 1) Install" "la mise à jour $EXPECT_VERSION choisie à l'installation est introuvable : choisis 1) Installer")
-    }
     $Script:Keys = Join-Path $Script:Repo 'keys'
     $Script:VenvPy = Join-Path $Script:Repo '.venv\Scripts\python.exe'
-    if (-not (Test-Path -LiteralPath (Join-Path $Script:Keys 'prod.keys')) -or -not (Test-Path -LiteralPath $Script:VenvPy)) { Fail 'E40' (L 'install incomplete: choose 1) Install' 'installation incomplète : choisis 1) Installer') }
-    Say (L '  The DLC (fighters, outfits, spirits) are the ones you bought, dumped from your Switch with nxdumptool' '  Les DLC (combattants, costumes, esprits) sont ceux que tu as achetés, dumpés de ta Switch avec nxdumptool')
-    Say (L '  (.nsp files). To play online together, have the same DLC.' '  (fichiers .nsp). Pour jouer en ligne ensemble, ayez les mêmes DLC.')
+    if (-not (Test-Path -LiteralPath $Script:VenvPy)) { Fail 'E40' (L 'install incomplete: choose 1) Install' 'installation incomplète : choisis 1) Installer') }
+    Say (L '  The DLC (fighters, outfits, spirits) are the ones you bought, dumped from your Switch (nxdumptool, DBI):' '  Les DLC (combattants, costumes, esprits) sont ceux que tu as achetés, dumpés de ta Switch (nxdumptool, DBI) :')
+    Say (L '  .nsp or .nsz files, named as dumped (the name holds the DLC id, 01006A800016F...). To play online together, have the same DLC.' '  fichiers .nsp ou .nsz, avec leur nom de dump (il contient l''identifiant du DLC, 01006A800016F...). Pour jouer en ligne ensemble, ayez les mêmes DLC.')
     $d = Pick-Folder (L 'Choose the folder that holds your DLC (.nsp dumped from your Switch)' 'Choisis le dossier qui contient tes DLC (.nsp dumpés de ta Switch)')
     if (-not $d) { Say (L '  No folder chosen: nothing changed.' '  Aucun dossier choisi : rien n''a changé.'); return }
-    # (-Include does nothing with -LiteralPath in PowerShell 5.1: the extension is tested instead)
-    if (-not (Get-ChildItem -LiteralPath $d -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.nsp', '.nca' } | Select-Object -First 1)) { Fail 'E40' (L "no .nsp file in $d" "pas de fichier .nsp dans $d") }
-    $Script:Inputs = @{ base = $prev.base; update = $upd; prodkeys = $prev.prodkeys; titlekeys = $prev.titlekeys; dlc = $d; firmware = $prev.firmware; update_version = $EXPECT_VERSION }
+    $r = Invoke-Helper @('dlc', '--dir', $d, '--keys', $Script:Keys) -Live -name 'dlc'
+    if ($r.Code -ne 0) {
+        $c = if ($r.ErrCode) { $r.ErrCode } else { 'E54' }
+        $t = if ($r.ErrText) { $r.ErrText } else { L "stopped (code $($r.Code))" "arrêt (code $($r.Code))" }
+        Set-Step 'DLC' 'FAILED' $c
+        Fail $c $t
+    }
+    $n = Get-DlcCount $r
+    $prev = Load-Inputs
+    $Script:Inputs = @{}
+    if ($prev) { foreach ($p in $prev.PSObject.Properties) { $Script:Inputs[$p.Name] = $p.Value } }
+    $Script:Inputs['dlc'] = $d
     Save-Inputs
-    Ensure-LLVM; Ensure-Opus; Ensure-SDL3      # (the build's environment as at the install: the game stays as it is)
-    Build-Game (L 'The DLC into the game (a few minutes)' 'Les DLC dans le jeu (quelques minutes)')
-    $cfg = Join-Path $Script:Repo 'dump\modules\aoc.cfg'
-    $n = if (Test-Path -LiteralPath $cfg) { @(Get-Content -LiteralPath $cfg | Where-Object { $_ -and -not $_.StartsWith('#') }).Count } else { 0 }
     $Script:Info['DLC'] = "$n in $d"
-    if (-not $n) { Set-Step 'DLC' 'FAILED' 'none'; Fail 'E53' (L "no Smash Ultimate DLC recognised in $d (DLC .nsp files dumped from your Switch?)" "aucun DLC de Smash Ultimate reconnu dans $d (des .nsp de DLC dumpés de ta Switch ?)") }
-    Ok (L "$n DLC added: they show at the next start of the game" "$n DLC ajoutés : ils apparaissent au prochain lancement du jeu")
+    Ok (L "DLC added: $n in the list, they show at the next start of the game" "DLC ajoutés : $n dans la liste, ils apparaissent au prochain lancement du jeu")
+    if (Get-Process ssbu -ErrorAction SilentlyContinue) { Say (L '  The game is running: close it and start it again to see them.' '  Le jeu tourne : ferme-le et relance-le pour les voir.') }
     Set-Step 'DLC' 'OK' "$n"
+}
+
+# The number of DLC ws_setup.py listed ("@@DLC <n>"), 0 when it listed none.
+function Get-DlcCount($r) {
+    $l = $r.Lines | Where-Object { $_ -like '@@DLC *' } | Select-Object -Last 1
+    if ($l -and $l.Substring(6).Trim() -match '^\d+$') { return [int]$Matches[0] }
+    return 0
 }
 
 function Ensure-OnlineName {
@@ -1490,6 +1505,29 @@ function Ensure-OnlineName {
 # the players numbered by their address once the room has 2) and SSBU_RB_NET_LIVE=1 (this PC's controllers play the
 # fight: without it a bot does), read by runtime/hle_rb_core.c; the game inherits them through the window. Without
 # rollback every SSBU_RB* variable goes, and the netplay variables Play SSBU.bat clears go too.
+function Test-VisibleWindow([int]$id) {
+    <# Whether process $id shows a top-level window, owned or not (Process.MainWindowHandle skips owned ones); $true
+       when this cannot be told, so that nothing is stopped on a guess. #>
+    try {
+        if (-not ('WsSetup.Win' -as [type])) {
+            Add-Type -Namespace WsSetup -Name Win -MemberDefinition @'
+[DllImport("user32.dll")] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+[DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+[DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+public static bool Shows(int id) {
+    IntPtr h = IntPtr.Zero;
+    while ((h = FindWindowEx(IntPtr.Zero, h, null, null)) != IntPtr.Zero) {
+        uint p; GetWindowThreadProcessId(h, out p);
+        if (p == (uint)id && IsWindowVisible(h)) return true;
+    }
+    return false;
+}
+'@
+        }
+        return [WsSetup.Win]::Shows($id)
+    } catch { return $true }
+}
+
 function Start-Game([bool]$rollback = $false) {
     $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $log = Join-Path $Script:Repo 'build\play.log'
@@ -1508,16 +1546,37 @@ function Start-Game([bool]$rollback = $false) {
     $launcher = Join-Path $Script:Repo 'tools\launcher.ps1'
     try {
         $t0 = Get-Date
-        if (Test-Path -LiteralPath $launcher) {
-            $p = Start-Process -FilePath $ps -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $launcher + '"'), '-Auto') -WorkingDirectory $Script:Repo -WindowStyle Hidden -PassThru
+        $watch = Test-Path -LiteralPath $launcher
+        if ($watch) {
+            # No console and no show flag. Kit 4.1 started it with -WindowStyle Hidden: Windows then opens the process's
+            # first window hidden too, so launcher.ps1's window stayed invisible on every PC without show_launcher = 0
+            # and the game never started (Play SSBU.bat, from a visible console, worked).
+            $si = New-Object Diagnostics.ProcessStartInfo
+            $si.FileName = $ps
+            $si.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $launcher + '" -Auto'
+            $si.WorkingDirectory = $Script:Repo
+            $si.UseShellExecute = $false
+            $si.CreateNoWindow = $true
+            $p = [Diagnostics.Process]::Start($si)
         } else {      # (a folder still at kit 2.0-2.2's WindowSmash, 13.0.4: its Play SSBU.bat picks the version folder)
             $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', ('"' + (Join-Path $Script:Repo 'Play SSBU.bat') + '"') -WorkingDirectory $Script:Repo -PassThru
         }
         $null = $p.Handle      # (Windows PowerShell 5.1 loses the exit code of a process whose handle was never asked for)
         Say (L '  The game window opens (game version, display, online, controllers): click Play to play.' '  La fenêtre du jeu s''ouvre (version du jeu, affichage, en ligne, manettes) : clique sur Play pour jouer.')
-        while (-not $p.HasExited -and -not (Get-Process ssbu -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 500 }
-        if ($p.HasExited -and $p.ExitCode -eq 2 -and (Test-Path -LiteralPath $launcher)) {      # (the window could not open: the game as Play SSBU.bat then starts it)
-            Log 'launcher.ps1: no window (exit 2): the game started directly'
+        $noWindow = $false
+        while (-not $p.HasExited -and -not (Get-Process ssbu -ErrorAction SilentlyContinue)) {
+            Start-Sleep -Milliseconds 500
+            if (-not $watch) { continue }
+            if (Test-VisibleWindow $p.Id) { $watch = $false; continue }      # (its window is up: the player takes their time)
+            if (((Get-Date) - $t0).TotalSeconds -ge 60) {      # (no window after a minute: the game starts as Play SSBU.bat starts it without one)
+                try { $p.Kill() } catch { }
+                $noWindow = $true
+                break
+            }
+        }
+        if ($noWindow -or ($p.HasExited -and $p.ExitCode -eq 2 -and (Test-Path -LiteralPath $launcher))) {      # (the window could not open: the game as Play SSBU.bat then starts it)
+            Log "launcher.ps1: no window ($(if ($noWindow) { 'none after 60 s' } else { 'exit 2' })): the game started directly"
+            Say (L '  The game window did not open: the game starts directly (your last settings).' '  La fenêtre du jeu ne s''est pas ouverte : le jeu démarre directement (tes derniers réglages).')
             $t0 = Get-Date
             Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', 'build\ssbu.exe dump\modules --status 30 --online > build\play.log 2>&1' -WorkingDirectory $Script:Repo -WindowStyle Minimized
         }

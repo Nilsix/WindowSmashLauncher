@@ -74,7 +74,7 @@ dernière).
 | 4) Diagnostic | Crée un rapport sans rien installer. |
 | 5) Débloquer tous les personnages | Le launcher le fait déjà tout seul (après l'installation, au premier lancement quand tu fermes le jeu, puis avant chaque lancement) ; l'option le fait tout de suite, jeu fermé. |
 | 6) Optimiser | Précompile les shaders (FPS stables) et met la latence d'affichage à 1. |
-| 7) Ajouter mes DLC | Ajoute au jeu les DLC que tu as achetés, dumpés de ta Switch (dossier de fichiers `.nsp`). En ligne, ayez les mêmes DLC. |
+| 7) Ajouter mes DLC | Ajoute au jeu les DLC que tu as achetés, dumpés de ta Switch (dossier de fichiers `.nsp`/`.nsz` avec leur nom de dump, qui contient l'identifiant `01006A800016F...`). Un deuxième dossier s'ajoute à la liste. En ligne, ayez les mêmes DLC. |
 | 8) Français / English | Le launcher est en anglais par défaut : **8** le passe en français (et **8** le remet en anglais). Le choix est gardé. |
 
 ## Jouer en ligne
