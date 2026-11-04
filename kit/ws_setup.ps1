@@ -9,27 +9,31 @@
 # Kit 4.1: the migration's corner cases (an old OpenSmash build folder holding other files, game files kept inside it,
 # an update stopped before its compile, game files gone since the last build, no firmware, a copy without git), the
 # install folder on an SSD by default, and the players' own shortcuts to an old launcher file.
+# Kit 4.3: OpenSmash Ultimate 6c38207, whose rollback netcode is on by default online (Quickplay and 1-on-1 Local Wireless
+# room matches, when both games have it; Esc > Online > Rollback netcode turns it off): one "Start the game" option, the
+# menu renumbered (kits 4.0-4.2's option 3, rollback through the room, is gone).
 # This file must stay UTF-8 with a BOM (Windows PowerShell 5.1 reads a BOM-less file as ANSI).
 # A complete installer: it installs what is missing (Git, Python 3.14, Visual Studio Build Tools, LLVM, Opus), clones
 # OpenSmash Ultimate, prepares the user's own game files and builds the game.
 # Every failure stops with a code (E..), an explanation and a report on the Desktop
 # (OpenSmash-Ultimate-setup-report.txt) that can be sent back as it is: it holds no key and no game data.
-# The player sees English, or French when chosen (menu 8, kept in %LOCALAPPDATA%\WindowSmash-setup\lang.txt): every
+# The player sees English, or French when chosen (menu 7, kept in %LOCALAPPDATA%\WindowSmash-setup\lang.txt): every
 # message is written as L 'English' 'French'. The report and the log stay in English.
-# Modes (-Mode, the launcher's argument): install, play, play-rollback, diag, unlock, optimize, dlc; none: the menu.
+# Modes (-Mode, the launcher's argument): install, play, diag, unlock, optimize, dlc; none: the menu. play-rollback and
+# play-norollback (older launchers' names) are play.
 # Test-only environment: WS_NO_BUILD (skip the compile), WS_STOP_AFTER=<step>, WS_NO_NOTEPAD, WS_REPORT_DIR,
 # WS_INPUTS_JSON (another inputs.json), WS_DESKTOP_DIR (another Desktop; Downloads then not looked at).
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '4.2 (2026-11-04)'
+$KitVersion = '4.3 (2026-11-04)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
 # (WindowSmash, github.com/OpenSmash-Ultimate/WindowSmash, pinned at 8025b48 by kits 3.x, and OpenSmash merged on
 # 2026-11-03 into one repository whose history goes on from WindowSmash's: a WindowSmash folder moves to it with git)
 $WS_GIT_URL  = 'https://github.com/OpenSmash-Ultimate/OpenSmash-Ultimate.git'
 $WS_OLD_URL  = '(?i)github\.com[/:](SNO2207|OpenSmash-Ultimate)/WindowSmash(\.git)?/?$'   # where kits 1.x to 3.x cloned WindowSmash from
-$WS_COMMIT   = '21b0367833e59a6ec3a31238f3d9fc8a38dc11fe'   # main, 2026-11-04: "Merge pull request #128" (launcher updates)
+$WS_COMMIT   = '6c38207500a0cf973559b40fc22d88d54e359a60'   # main, 2026-11-04: "Rollback on by default online; live controllers in rollback" (#147)
 $WS_BRANCH   = 'main'
 $WS_ZIP      = "https://codeload.github.com/OpenSmash-Ultimate/OpenSmash-Ultimate/zip/$WS_COMMIT"
 $WS_FILES    = @{   # SHA-256 (line ends as LF) of files of that commit: a copy without git is checked with them
@@ -113,8 +117,8 @@ function Hint([string]$code) {
         'E61' { L "Making ssbu.exe failed: close the game if it is running, then start again." "La création de ssbu.exe a échoué : ferme le jeu s'il tourne et relance." }
         'E62' { L "ssbu.exe vanished after the compile: your antivirus may have removed it (add an exclusion for the OpenSmash Ultimate folder)." "ssbu.exe a disparu après la compilation : ton antivirus l'a peut-être supprimé (ajoute une exclusion pour le dossier OpenSmash Ultimate)." }
         'E70' { L "The game did not start." "Le jeu ne s'est pas lancé." }
-        'E85' { L "Shader precompilation stopped: close the game, then start OpenSmash Ultimate Launcher again and choose 6)." "La précompilation des shaders s'est arrêtée : ferme le jeu, puis relance OpenSmash Ultimate Launcher et choisis 6)." }
-        'E80' { L "Unlocking the fighters failed: start the game once up to the menu, close it, then choose option 5 again." "Déblocage des personnages impossible : lance le jeu une fois jusqu'au menu, ferme-le, puis relance l'option 5." }
+        'E85' { L "Shader precompilation stopped: close the game, then start OpenSmash Ultimate Launcher again and choose 5)." "La précompilation des shaders s'est arrêtée : ferme le jeu, puis relance OpenSmash Ultimate Launcher et choisis 5)." }
+        'E80' { L "Unlocking the fighters failed: start the game once up to the menu, close it, then choose option 4 again." "Déblocage des personnages impossible : lance le jeu une fois jusqu'au menu, ferme-le, puis relance l'option 4." }
         'E99' { L "Unexpected error of the script: send the report." "Erreur inattendue du script : envoie le rapport." }
         default { $null }
     }
@@ -1320,32 +1324,34 @@ function Finish {
     Say ''
     if ($Script:Lang -eq 'fr') {
         Say "  Pour jouer : le raccourci 'Smash Ultimate (OpenSmash Ultimate)' (il vérifie les mises à jour à chaque lancement)."
-        Say "  Menu (installer, rollback, débloquer, optimiser, diagnostic, DLC, langue) : le raccourci 'OpenSmash Ultimate Launcher'."
+        Say "  Menu (installer, jouer, diagnostic, débloquer, optimiser, DLC, langue) : le raccourci 'OpenSmash Ultimate Launcher'."
         Say '  Au lancement, une fenêtre montre la version du jeu et les réglages (affichage, en ligne, manettes) :'
         Say '  bouton Play pour jouer. Pendant le jeu, Échap ouvre le menu des réglages.'
         Say '  En ligne : le lobby public ; dans le jeu, Local Wireless liste les rooms de tous les joueurs de la même'
         Say '  version (aucun port à ouvrir), et Online > Smash > Quickplay cherche des adversaires (en test).'
-        Say '  Rollback (expérimental, 2 joueurs) : option 3 du launcher, pour les deux joueurs.'
+        Say '  Rollback : activé par défaut en ligne (Quickplay et rooms Local Wireless à 2, quand l''autre joueur l''a aussi) ;'
+        Say '  sans rollback : Échap > Online > Rollback netcode off.'
         Say '  Rooms entre amis seulement : dans la fenêtre du jeu, "Private lobby" et le même code chez tout le monde.'
-        Say '  FPS : si les shaders n''ont pas été précompilés, relance OpenSmash Ultimate Launcher et choisis 6).'
+        Say '  FPS : si les shaders n''ont pas été précompilés, relance OpenSmash Ultimate Launcher et choisis 5).'
         Say '  Clavier : flèches = stick, Z/X/C/V = A/B/X/Y, A/S = L/R, Q/W = ZL/ZR, Entrée = +, F1 = infos.'
         Say '  Tous les personnages sont débloqués par le launcher (dès la fin de la première partie : laisse sa fenêtre ouverte).'
         Say "  Un rapport (réussite) est sur le Bureau : OpenSmash-Ultimate-setup-report.txt"
     } else {
         Say "  To play: the 'Smash Ultimate (OpenSmash Ultimate)' shortcut (it checks for updates at every start)."
-        Say "  Menu (install, rollback, unlock, optimize, diagnosis, DLC, language): the 'OpenSmash Ultimate Launcher' shortcut."
+        Say "  Menu (install, play, diagnosis, unlock, optimize, DLC, language): the 'OpenSmash Ultimate Launcher' shortcut."
         Say '  At start, a window shows the game version and the settings (display, online, controllers):'
         Say '  Play button to play. While playing, Esc opens the settings menu.'
         Say '  Online: the public lobby; in the game, Local Wireless lists the rooms of every player of the same'
         Say '  version (no port to open), and Online > Smash > Quickplay looks for opponents (being tested).'
-        Say '  Rollback (experimental, 2 players): launcher option 3, for both players.'
+        Say '  Rollback: on by default online (Quickplay and 1-on-1 Local Wireless rooms, when the other player has it too);'
+        Say '  without it: Esc > Online > Rollback netcode off.'
         Say '  Rooms for friends only: in the game window, "Private lobby" and the same code for everyone.'
-        Say '  FPS: if the shaders were not precompiled, start OpenSmash Ultimate Launcher again and choose 6).'
+        Say '  FPS: if the shaders were not precompiled, start OpenSmash Ultimate Launcher again and choose 5).'
         Say '  Keyboard: arrows = stick, Z/X/C/V = A/B/X/Y, A/S = L/R, Q/W = ZL/ZR, Enter = +, F1 = info.'
         Say '  Every fighter is unlocked by the launcher (from the end of the first game: leave its window open).'
         Say "  A report (success) is on the Desktop: OpenSmash-Ultimate-setup-report.txt"
     }
-    if (Ask-YesNo (L '  Start the game now?' '  Je lance le jeu maintenant ?')) { Start-Game $Script:Rollback }
+    if (Ask-YesNo (L '  Start the game now?' '  Je lance le jeu maintenant ?')) { Start-Game }
 }
 
 # ---- smoother play: display latency 1, shaders compiled ahead of time ---------------------------
@@ -1378,10 +1384,10 @@ function Set-Latency1 {
 function Precompile-Shaders([bool]$fatal) {
     Title (L 'Shader precompilation (30 min to 2 h, at low priority)' 'Précompilation des shaders (30 min à 2 h, en priorité basse)')
     Say (L '  Without it, the game compiles each effect the first time it shows: that is what drops the FPS.' '  Sans elle, le jeu compile chaque effet la première fois qu''il apparaît : c''est ce qui fait tomber les FPS.')
-    Say (L '  You can close the window to stop: start OpenSmash Ultimate Launcher again and choose 6) to carry on.' '  Tu peux fermer la fenêtre pour arrêter : relance OpenSmash Ultimate Launcher et choisis 6) pour reprendre où ça en était.')
+    Say (L '  You can close the window to stop: start OpenSmash Ultimate Launcher again and choose 5) to carry on.' '  Tu peux fermer la fenêtre pour arrêter : relance OpenSmash Ultimate Launcher et choisis 5) pour reprendre où ça en était.')
     if (Get-Process ssbu -ErrorAction SilentlyContinue) {
         $m = L 'the game is running: close it during the precompilation' 'le jeu tourne : ferme-le pendant la précompilation'
-        if ($fatal) { Fail 'E85' $m } else { Warn "W85 $m $(L '(option 6 later)' '(option 6 plus tard)')"; Set-Step 'Shaders' 'SKIPPED' 'game open'; return }
+        if ($fatal) { Fail 'E85' $m } else { Warn "W85 $m $(L '(option 5 later)' '(option 5 plus tard)')"; Set-Step 'Shaders' 'SKIPPED' 'game open'; return }
     }
     $env:SSBU_CLANG = $Script:Clang
     $cpu = (Get-CimInstance Win32_Processor | Measure-Object NumberOfLogicalProcessors -Sum).Sum
@@ -1390,7 +1396,7 @@ function Precompile-Shaders([bool]$fatal) {
     if ($r.Code -ne 0) {
         $m = if ($r.ErrText) { $r.ErrText } else { "code $($r.Code)" }
         Set-Step 'Shaders' 'FAILED' $m
-        if ($fatal) { Fail 'E85' $m } else { Warn "W85 $m $(L '(run option 6 again later)' "(relance l'option 6 plus tard)")"; return }
+        if ($fatal) { Fail 'E85' $m } else { Warn "W85 $m $(L '(run option 5 again later)' "(relance l'option 5 plus tard)")"; return }
     }
     Ok (L 'shaders precompiled' 'shaders précompilés')
     Set-Step 'Shaders' 'OK'
@@ -1407,7 +1413,7 @@ function Optimize-Only {
     Precompile-Shaders $true
 }
 
-# Every fighter unlocked in the game's save (tools/unlock_all.py, through ws_setup.py): by hand (menu 5), or by itself
+# Every fighter unlocked in the game's save (tools/unlock_all.py, through ws_setup.py): by hand (menu 4), or by itself
 # ($auto) after the install and around every start of the game. unlock_all adds only what is missing and keeps a copy of
 # the save from before in save_backups when it changes it, so running it every time costs nothing. Without a save yet,
 # Start-Game waits for the game's end (the first start writes the save) and unlocks then. $auto never stops the kit.
@@ -1501,10 +1507,11 @@ function Ensure-OnlineName {
 # Play SSBU.bat does. The kit starts that window itself, not Play SSBU.bat: since the merge, Play SSBU.bat starts
 # OpenSmash.exe instead when the folder has one (upstream's own launcher, which updates the game past the group's
 # version). Whether the game was started is told by its log: every way of starting it writes build\play.log anew.
-# Rollback (menu 3, experimental): SSBU_RB=1, SSBU_RB_NET=relay (rollback's messages through the Local Wireless room,
-# the players numbered by their address once the room has 2) and SSBU_RB_NET_LIVE=1 (this PC's controllers play the
-# fight: without it a bot does), read by runtime/hle_rb_core.c; the game inherits them through the window. Without
-# rollback every SSBU_RB* variable goes, and the netplay variables Play SSBU.bat clears go too.
+# Rollback: since 6c38207 the game started online (--online, as the window starts it) plays Quickplay and 1-on-1 Local
+# Wireless room matches with rollback when both games have it (runtime/hle_rb_core.c, net_relay.c net_rollback_default),
+# unless online_rollback.txt says off (Esc > Online > Rollback netcode). Every SSBU_RB* variable goes, so that this
+# default and that setting count (kits 4.0-4.2's option 3 set SSBU_RB=1, SSBU_RB_NET=relay, SSBU_RB_NET_LIVE=1), and the
+# netplay variables Play SSBU.bat clears go too.
 function Test-VisibleWindow([int]$id) {
     <# Whether process $id shows a top-level window, owned or not (Process.MainWindowHandle skips owned ones); $true
        when this cannot be told, so that nothing is stopped on a guess. #>
@@ -1528,7 +1535,7 @@ public static bool Shows(int id) {
     } catch { return $true }
 }
 
-function Start-Game([bool]$rollback = $false) {
+function Start-Game {
     $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $log = Join-Path $Script:Repo 'build\play.log'
     Ensure-OnlineName
@@ -1538,11 +1545,8 @@ function Start-Game([bool]$rollback = $false) {
         Remove-Item -LiteralPath "Env:$v" -ErrorAction SilentlyContinue
     }
     foreach ($v in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'SSBU_RB*' } | ForEach-Object { $_.Name })) { Remove-Item -LiteralPath "Env:$v" }
-    if ($rollback) {
-        $env:SSBU_RB = '1'; $env:SSBU_RB_NET = 'relay'; $env:SSBU_RB_NET_LIVE = '1'
-        Say (L '  Rollback on (experimental): it plays the Local Wireless rooms of 2 players who both started the game with it (option 3).' '  Rollback activé (expérimental) : il sert dans les rooms Local Wireless à 2 joueurs qui ont tous les deux lancé le jeu avec (option 3).')
-    }
-    Log "start: rollback=$rollback"
+    Say (L '  Rollback netcode: on by default online (Quickplay and 1-on-1 Local Wireless rooms, when the other player has it too; Esc > Online > Rollback netcode turns it off).' '  Rollback : activé par défaut en ligne (Quickplay et rooms Local Wireless à 2, quand l''autre joueur l''a aussi ; Échap > Online > Rollback netcode le désactive).')
+    Log 'start'
     $launcher = Join-Path $Script:Repo 'tools\launcher.ps1'
     try {
         $t0 = Get-Date
@@ -1853,25 +1857,22 @@ try {
     if (-not $KitDir) { $KitDir = (Get-Location).Path }
     if ($KitDir.Length -gt 3) { $KitDir = $KitDir.TrimEnd('\') }
     try { Update-LauncherFiles } catch { Log "launcher files: $($_.Exception.Message)" }
-    if ($Mode -eq 'play-norollback') { $Mode = 'play' }       # (the OpenSmash launcher's name for it)
-    if ($Mode -and $Mode -notin 'install', 'play', 'play-rollback', 'diag', 'unlock', 'optimize', 'dlc') { Log "mode '$Mode' unknown (an old launcher's): the menu"; $Mode = '' }
+    if ($Mode -in 'play-rollback', 'play-norollback') { $Mode = 'play' }       # (older launchers' names: one way to play since 4.3)
+    if ($Mode -and $Mode -notin 'install', 'play', 'diag', 'unlock', 'optimize', 'dlc') { Log "mode '$Mode' unknown (an old launcher's): the menu"; $Mode = '' }
     while (-not $Mode) {
         Write-Host ''
         Write-Host (L '  1) Install / update' '  1) Installer / mettre à jour')
-        Write-Host (L '  2) Start the game (online, its own delay-based netcode)' '  2) Lancer le jeu (en ligne, son netcode d''origine, delay-based)')
-        Write-Host (L '  3) Start the game WITH rollback (experimental, 2 players: both choose 3)' '  3) Lancer le jeu AVEC rollback (expérimental, 2 joueurs : les deux choisissent 3)')
-        Write-Host (L '  4) Diagnosis only (makes the report, installs nothing)' '  4) Diagnostic seulement (crée le rapport sans rien installer)')
-        Write-Host (L '  5) Unlock every fighter (the launcher also does it by itself)' '  5) Débloquer tous les personnages (le launcher le fait aussi tout seul)')
-        Write-Host (L '  6) Optimize: precompile the shaders and latency 1 (steady FPS)' '  6) Optimiser : précompiler les shaders et latence 1 (FPS stables)')
-        Write-Host (L '  7) Add my DLC (dumped from my Switch, .nsp files)' '  7) Ajouter mes DLC (dumpés de ma Switch, fichiers .nsp)')
-        Write-Host (L '  8) Français (passer le launcher en français)' '  8) English (switch the launcher to English)')
+        Write-Host (L '  2) Start the game (online, rollback netcode by default)' '  2) Lancer le jeu (en ligne, rollback par défaut)')
+        Write-Host (L '  3) Diagnosis only (makes the report, installs nothing)' '  3) Diagnostic seulement (crée le rapport sans rien installer)')
+        Write-Host (L '  4) Unlock every fighter (the launcher also does it by itself)' '  4) Débloquer tous les personnages (le launcher le fait aussi tout seul)')
+        Write-Host (L '  5) Optimize: precompile the shaders and latency 1 (steady FPS)' '  5) Optimiser : précompiler les shaders et latence 1 (FPS stables)')
+        Write-Host (L '  6) Add my DLC (dumped from my Switch, .nsp files)' '  6) Ajouter mes DLC (dumpés de ma Switch, fichiers .nsp)')
+        Write-Host (L '  7) Français (passer le launcher en français)' '  7) English (switch the launcher to English)')
         $m = "$(Read-Host (L '  Your choice [1]' '  Ton choix [1]'))".Trim()   # (no input at all: the default)
-        if ($m -eq '8') { Set-Language $(if ($Script:Lang -eq 'fr') { 'en' } else { 'fr' }); Log "language $Script:Lang"; & $header; continue }
-        $Mode = @{ '2' = 'play'; '3' = 'play-rollback'; '4' = 'diag'; '5' = 'unlock'; '6' = 'optimize'; '7' = 'dlc' }[$m]
+        if ($m -eq '7') { Set-Language $(if ($Script:Lang -eq 'fr') { 'en' } else { 'fr' }); Log "language $Script:Lang"; & $header; continue }
+        $Mode = @{ '2' = 'play'; '3' = 'diag'; '4' = 'unlock'; '5' = 'optimize'; '6' = 'dlc' }[$m]
         if (-not $Mode) { $Mode = 'install' }
     }
-    $Script:Rollback = ($Mode -eq 'play-rollback')
-    if ($Script:Rollback) { $Mode = 'play' }
     Probe-System
     if ($Mode -eq 'play') {
         $null = Find-Repo $false
@@ -1913,7 +1914,7 @@ try {
             }
             if ($offer -and (Ask-YesNo (L '  Update now? (recompile: 20 min to 2 h depending on the version and the PC)' '  Je fais la mise à jour maintenant ? (recompilation : 20 min à 2 h selon la version et le PC)'))) { $Mode = 'install' }
         }
-        if ($Mode -eq 'play') { Start-Game $Script:Rollback; exit 0 }
+        if ($Mode -eq 'play') { Start-Game; exit 0 }
     }
     if ($Mode -eq 'unlock') { Unlock-Fighters; Read-Host (L 'Enter to close' 'Entrée pour fermer'); exit 0 }
     if ($Mode -eq 'optimize') { Optimize-Only; Write-Report 'OK (optimisation)'; Read-Host (L 'Enter to close' 'Entrée pour fermer'); exit 0 }
@@ -1973,7 +1974,7 @@ try {
     Unlock-Fighters $true      # (a save there already; a new one gets them at its first start's end, see Start-Game)
     Set-Latency1
     if (Ask-YesNo (L '  Precompile the shaders now? (recommended: steady FPS from the first match; 30 min to 2 h)' '  Je précompile les shaders maintenant ? (recommandé : FPS stables dès le premier match ; 30 min à 2 h)')) { Precompile-Shaders $false }
-    else { Say (L '  Later: start OpenSmash Ultimate Launcher again and choose 6).' '  Plus tard : relance OpenSmash Ultimate Launcher et choisis 6).') }
+    else { Say (L '  Later: start OpenSmash Ultimate Launcher again and choose 5).' '  Plus tard : relance OpenSmash Ultimate Launcher et choisis 5).') }
     Finish
     Read-Host (L 'Enter to close' 'Entrée pour fermer')
     exit 0

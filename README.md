@@ -3,7 +3,7 @@
 Un seul fichier pour installer, mettre à jour et lancer **OpenSmash Ultimate** : Super Smash Bros. Ultimate en
 version PC native (une recompilation du jeu Switch, projet
 [OpenSmash-Ultimate/OpenSmash-Ultimate](https://github.com/OpenSmash-Ultimate/OpenSmash-Ultimate)), avec le jeu en
-ligne entre amis et un rollback netcode expérimental.
+ligne entre amis et le rollback netcode (activé par défaut).
 
 Tout est construit sur ton PC à partir de **tes propres fichiers**, dumpés de ta console. Ce dépôt ne contient
 aucun fichier du jeu, aucune clé, aucun firmware.
@@ -41,7 +41,7 @@ relancer le launcher : il reprend où il en était.
 À la fin, deux raccourcis sont créés sur le Bureau et dans le menu Démarrer :
 
 - **Smash Ultimate (OpenSmash Ultimate)** : lance le jeu (en vérifiant les mises à jour à chaque fois) ;
-- **OpenSmash Ultimate Launcher** : le menu (installer, jouer, jouer avec rollback, optimiser, diagnostic).
+- **OpenSmash Ultimate Launcher** : le menu (installer, jouer, diagnostic, optimiser, DLC).
 
 ## Tu avais le launcher WindowSmash ou OpenSmash ?
 
@@ -55,7 +55,7 @@ n'en font plus qu'un. Tu n'as rien à télécharger : lance ton launcher (ou ton
 - **Launcher OpenSmash** : il propose d'installer OpenSmash Ultimate (il reprend tes fichiers du jeu et ta
   sauvegarde), puis de supprimer l'ancienne installation OpenSmash (une copie de sa sauvegarde est gardée). Si le
   disque manque de place, il propose de la supprimer avant.
-- Le rollback est maintenant l'**option 3** du menu.
+- Le rollback est activé par défaut quand tu lances le jeu (raccourci ou **option 2**) : il n'y a plus d'option à part.
 
 ## Mises à jour
 
@@ -69,13 +69,15 @@ dernière).
 | Choix | Ce qu'il fait |
 | :--- | :--- |
 | 1) Installer / mettre à jour | Installe tout, ou met une installation existante à la version du groupe et recompile. |
-| 2) Lancer le jeu | Ouvre la fenêtre du jeu (réglages), puis le jeu en ligne, avec son netcode d'origine (delay-based). |
-| 3) Lancer le jeu avec rollback | Expérimental : rooms **Local Wireless à 2 joueurs** qui l'ont lancé tous les deux ainsi. Demande un bon processeur. |
-| 4) Diagnostic | Crée un rapport sans rien installer. |
-| 5) Débloquer tous les personnages | Le launcher le fait déjà tout seul (après l'installation, au premier lancement quand tu fermes le jeu, puis avant chaque lancement) ; l'option le fait tout de suite, jeu fermé. |
-| 6) Optimiser | Précompile les shaders (FPS stables) et met la latence d'affichage à 1. |
-| 7) Ajouter mes DLC | Ajoute au jeu les DLC que tu as achetés, dumpés de ta Switch (dossier de fichiers `.nsp`/`.nsz` avec leur nom de dump, qui contient l'identifiant `01006A800016F...`). Un deuxième dossier s'ajoute à la liste. En ligne, ayez les mêmes DLC. |
-| 8) Français / English | Le launcher est en anglais par défaut : **8** le passe en français (et **8** le remet en anglais). Le choix est gardé. |
+| 2) Lancer le jeu | Ouvre la fenêtre du jeu (réglages), puis le jeu en ligne, avec le rollback netcode par défaut (voir [Jouer en ligne](#jouer-en-ligne)). |
+| 3) Diagnostic | Crée un rapport sans rien installer. |
+| 4) Débloquer tous les personnages | Le launcher le fait déjà tout seul (après l'installation, au premier lancement quand tu fermes le jeu, puis avant chaque lancement) ; l'option le fait tout de suite, jeu fermé. |
+| 5) Optimiser | Précompile les shaders (FPS stables) et met la latence d'affichage à 1. |
+| 6) Ajouter mes DLC | Ajoute au jeu les DLC que tu as achetés, dumpés de ta Switch (dossier de fichiers `.nsp`/`.nsz` avec leur nom de dump, qui contient l'identifiant `01006A800016F...`). Un deuxième dossier s'ajoute à la liste. En ligne, ayez les mêmes DLC. |
+| 7) Français / English | Le launcher est en anglais par défaut : **7** le passe en français (et **7** le remet en anglais). Le choix est gardé. |
+
+Depuis la version du 4 novembre 2026 (kit 4.3), le menu a une seule option pour jouer : les numéros des options
+suivantes ont baissé d'un (DLC = 6, langue = 7).
 
 ## Jouer en ligne
 
@@ -92,8 +94,11 @@ dernière).
    autre joueur qui cherche en même temps. Garde le fichier `netplay_id.txt` du dossier OpenSmash Ultimate : c'est
    ton compte (ne le donne à personne).
 
-**Rollback** : les deux joueurs lancent le jeu avec l'**option 3** du menu, puis l'un crée une room Local Wireless
-et l'autre la rejoint (2 joueurs). Les rooms à plus de 2 joueurs et les combats locaux se jouent comme d'habitude.
+**Rollback** : activé par défaut. Les combats Quickplay et les combats à 2 dans une room Local Wireless se jouent en
+rollback quand l'autre joueur l'a aussi (les deux jeux se mettent d'accord en 15 s au plus, sinon le combat se joue avec
+le netcode d'origine du jeu). Les rooms à plus de 2 joueurs et les combats locaux se jouent comme d'habitude. Pour
+jouer sans : **Échap** > **Online** > **Rollback netcode** sur **off** (compte au prochain lancement). Le rollback
+demande un bon processeur : si les FPS baissent en ligne, essaie sans.
 
 En jeu : **Échap** ouvre le menu des réglages, **F1** l'overlay (il doit afficher `Online`), **F11** le plein écran.
 
