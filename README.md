@@ -5,6 +5,10 @@ version PC native (une recompilation du jeu Switch, projet
 [OpenSmash-Ultimate/OpenSmash-Ultimate](https://github.com/OpenSmash-Ultimate/OpenSmash-Ultimate)), avec le jeu en
 ligne entre amis et le rollback netcode (activé par défaut).
 
+Le launcher est aussi un **double boot** : son **option 8** installe et lance **OpenSmash** (projet
+[OpenSmash-Ultimate/ssbu-recomp](https://github.com/OpenSmash-Ultimate/ssbu-recomp)), l'autre version PC du jeu,
+avec son propre jeu en ligne. Les deux s'installent côte à côte (voir [Le double boot](#le-double-boot-option-8)).
+
 Tout est construit sur ton PC à partir de **tes propres fichiers**, dumpés de ta console. Ce dépôt ne contient
 aucun fichier du jeu, aucune clé, aucun firmware.
 
@@ -45,17 +49,42 @@ relancer le launcher : il reprend où il en était.
 
 ## Tu avais le launcher WindowSmash ou OpenSmash ?
 
-Depuis novembre 2026, WindowSmash et OpenSmash sont **un seul projet : OpenSmash Ultimate**, et les deux launchers
-n'en font plus qu'un. Tu n'as rien à télécharger : lance ton launcher (ou ton raccourci) comme d'habitude.
+Depuis novembre 2026, WindowSmash est devenu **OpenSmash Ultimate**, et les launchers WindowSmash et OpenSmash
+n'en font plus qu'un (OpenSmash reste jouable : option 8). Tu n'as rien à télécharger : lance ton launcher (ou ton raccourci) comme d'habitude.
 
 - Il se met à jour, puis se renomme tout seul en **OpenSmash Ultimate Launcher.bat** ; les raccourcis deviennent
   **Smash Ultimate (OpenSmash Ultimate)** et **OpenSmash Ultimate Launcher**.
 - **Launcher WindowSmash** : ton dossier passe sur OpenSmash Ultimate et le jeu est recompilé (1 à 3 h, accepte la
   mise à jour). Ta sauvegarde, ton pseudo et tes réglages restent.
-- **Launcher OpenSmash** : il propose d'installer OpenSmash Ultimate (il reprend tes fichiers du jeu et ta
-  sauvegarde), puis de supprimer l'ancienne installation OpenSmash (une copie de sa sauvegarde est gardée). Si le
-  disque manque de place, il propose de la supprimer avant.
-- Le rollback est activé par défaut quand tu lances le jeu (raccourci ou **option 2**) : il n'y a plus d'option à part.
+- **Launcher OpenSmash** : ton installation OpenSmash est **gardée** et reste jouable avec l'**option 8** du menu
+  (le raccourci **Smash Ultimate (OpenSmash)** la lance ; s'il a disparu, le launcher le remet sur le Bureau une fois,
+  et **8 > 1** le recrée). Le launcher propose aussi d'installer OpenSmash Ultimate à côté (il reprend tes fichiers du
+  jeu et ta sauvegarde) ; le launcher ne supprime plus rien.
+- **OpenSmash Ultimate** : le rollback est activé par défaut quand tu lances le jeu (raccourci
+  **Smash Ultimate (OpenSmash Ultimate)** ou **option 2**) : il n'y a plus d'option à part. Dans **OpenSmash**
+  (option 8), le rollback reste une option à part : **8 > 3** (le raccourci **Smash Ultimate (OpenSmash)** et **8 > 2**
+  jouent sans).
+
+## Le double boot (option 8)
+
+**8) OpenSmash** ouvre le menu d'OpenSmash (ssbu-recomp) : installer / mettre à jour, jouer, jouer avec rollback,
+diagnostic, ajouter mes DLC, débloquer les personnages, mode PC peu puissant, langue, et **0** pour revenir au menu
+principal.
+
+- Les deux jeux sont **séparés** : dossiers, sauvegardes, versions figées pour le groupe. Installer l'un ne touche pas
+  à l'autre.
+- **Les lobbies sont séparés** : un joueur sur OpenSmash ne voit pas les rooms d'OpenSmash Ultimate (et inversement).
+  Choisissez le même jeu pour toute la session.
+- OpenSmash demande les mêmes fichiers (jeu de base 1.0.0, mise à jour 13.0.5, `prod.keys`) et réutilise ceux déjà
+  donnés à OpenSmash Ultimate, **sauf le jeu de base** : il lui faut ton `.xci`/`.nsp` d'origine, pas le dossier
+  extrait par OpenSmash Ultimate. Compte environ 30 Go de plus et 1 à 3 h de compilation la première fois.
+- Il s'installe à côté d'OpenSmash Ultimate (dossier `OpenSmash`, sinon `Games\OpenSmash` sur le même disque), ou
+  sur le disque qui a le plus de place.
+- À la première partie, il propose de reprendre ta sauvegarde la plus récente (celle d'OpenSmash Ultimate ou une
+  ancienne copie OpenSmash).
+- Raccourci **Smash Ultimate (OpenSmash)** : lance directement OpenSmash (en vérifiant les mises à jour).
+- DLC : **8** puis **5**, avec ton dossier de DLC dumpés (même règle de nom que l'option 6).
+- Problème : le rapport s'appelle **`OpenSmash-setup-report.txt`** (sur le Bureau).
 
 ## Mises à jour
 
@@ -75,9 +104,10 @@ dernière).
 | 5) Optimiser | Précompile les shaders (FPS stables) et met la latence d'affichage à 1. |
 | 6) Ajouter mes DLC | Ajoute au jeu les DLC que tu as achetés, dumpés de ta Switch (dossier de fichiers `.nsp`/`.nsz` avec leur nom de dump, qui contient l'identifiant `01006A800016F...`). Un deuxième dossier s'ajoute à la liste. En ligne, ayez les mêmes DLC. |
 | 7) Français / English | Le launcher est en anglais par défaut : **7** le passe en français (et **7** le remet en anglais). Le choix est gardé. |
+| 8) OpenSmash | Le double boot : le menu d'OpenSmash (ssbu-recomp), l'autre version PC, avec son propre lobby. Voir [Le double boot](#le-double-boot-option-8). |
 
 Depuis la version du 4 novembre 2026 (kit 4.3), le menu a une seule option pour jouer : les numéros des options
-suivantes ont baissé d'un (DLC = 6, langue = 7).
+suivantes ont baissé d'un (DLC = 6, langue = 7), et OpenSmash est l'option 8.
 
 ## Jouer en ligne
 
@@ -121,4 +151,7 @@ sur ton Bureau. Envoie ce fichier tel quel : il ne contient ni clés ni fichiers
 - `kit/ws_setup.ps1` : l'installateur (PowerShell 5.1, doit rester en UTF-8 avec BOM et CRLF), version figée
   `$WS_COMMIT` d'OpenSmash-Ultimate/OpenSmash-Ultimate.
 - `kit/ws_setup.py` : la partie Python (lecture des fichiers du jeu, puis compilation par `tools/build_game.py`).
+- `kit-opensmash/os_kit.ps1` : la partie OpenSmash (ssbu-recomp, version figée `$OS_COMMIT`), lancée par
+  `kit/ws_setup.ps1` pour l'option 8 et les modes `os-*` (code de sortie 3 = retour au menu principal). Même
+  encodage (UTF-8 avec BOM, CRLF).
 - `kit-opensmash/os_setup.ps1` : renvoie vers `kit/ws_setup.ps1` (pour les anciennes amorces OpenSmash).
