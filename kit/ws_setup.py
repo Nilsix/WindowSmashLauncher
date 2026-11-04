@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""WindowSmash setup kit, Python side. ws_setup.ps1 runs it with the repository's own Python environment.
+"""OpenSmash Ultimate Launcher's kit, Python side (WindowSmash's before the merge of 2026-11-03). ws_setup.ps1 runs it
+with the repository's own Python environment.
 
     ws_setup.py [--repo DIR] [--log FILE] <command> ...
 
@@ -89,7 +90,7 @@ def out(kind, payload):
 def tools(repo):
     t = os.path.join(repo, "tools")
     if not os.path.isfile(os.path.join(t, "nca.py")):
-        raise Problem("E10", L(f"{repo}: no tools\\nca.py (not the WindowSmash folder)", f"{repo}: pas de tools\\nca.py (ce n'est pas le dossier WindowSmash)"))
+        raise Problem("E10", L(f"{repo}: no tools\\nca.py (not the OpenSmash Ultimate folder)", f"{repo}: pas de tools\\nca.py (ce n'est pas le dossier OpenSmash Ultimate)"))
     if t not in sys.path:
         sys.path.insert(0, t)
     try:

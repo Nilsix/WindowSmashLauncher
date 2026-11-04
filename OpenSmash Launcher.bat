@@ -1,16 +1,18 @@
 @echo off
-rem OpenSmash Launcher: installs, updates and starts OpenSmash (native Super Smash Bros. Ultimate with rollback,
-rem github.com/OpenSmash-Ultimate/ssbu-recomp) from YOUR files, at the version pinned for the whole group.
+rem OpenSmash Ultimate Launcher: installs, updates and starts OpenSmash Ultimate (native Super Smash Bros. Ultimate,
+rem github.com/OpenSmash-Ultimate/OpenSmash-Ultimate) from YOUR files, at the version pinned for the whole group.
 rem On the first start it installs Git if missing and downloads the launcher (github.com/Nilsix/WindowSmashLauncher)
 rem into %LOCALAPPDATA%\WindowSmashLauncher. At every start it updates itself (git) and, when it changed, closes and
-rem starts again in its new version. Then it runs the kit (kit-opensmash\os_setup.ps1 of the repository).
-rem Optional argument: install | play | diag | dlc | unlock | lowspec | play-rollback (none: the menu). English, or French (menu 8).
+rem starts again in its new version. Then it runs the kit (kit\ws_setup.ps1 of the repository).
+rem Optional argument: install | play | play-rollback | diag | unlock | optimize | dlc (none: the menu). English, or
+rem French (menu 8). "WindowSmash Launcher.bat" and "OpenSmash Launcher.bat" (the two launchers before 2026-11-04) are
+rem copies of this file in the repository: an old copy updates itself from them, and the kit then renames it.
 setlocal
 set "WSL_SELF=%~f0"
 set "WSL_DIR=%~dp0"
 set "WSL_MODE=%~1"
 chcp 65001 >nul
-title OpenSmash Launcher
+title OpenSmash Ultimate Launcher
 rem Keep everything below up to "#@@BEGIN" ONE block in which every path ends with "exit": cmd.exe reads a batch file
 rem line by line at byte offsets, and reads a whole block before running it, so it never reads this file again while
 rem the update replaces it (here or in the repository copy). Delayed expansion is switched on only after the "set"
@@ -28,19 +30,20 @@ pause
 exit /b !RC!
 )
 #@@BEGIN boot.ps1
-# OpenSmash Launcher - the bootstrap (Windows PowerShell 5.1), extracted from "OpenSmash Launcher.bat" and run by it.
-# The same as the one of "WindowSmash Launcher.bat" but for the names; both use the same clone of the repository.
+# OpenSmash Ultimate Launcher - the bootstrap (Windows PowerShell 5.1), extracted from "OpenSmash Ultimate Launcher.bat"
+# (or from an old copy named "WindowSmash Launcher.bat" or "OpenSmash Launcher.bat", the same file) and run by it.
 # 1. Git: found, or installed (winget, else the official Git for Windows installer, its SHA-256 and signature checked).
 # 2. The launcher repository, kept in %LOCALAPPDATA%\WindowSmashLauncher: cloned the first time, updated every time
 #    (fetch + reset to the remote branch: that folder belongs to the launcher, nothing in it is edited by hand).
 # 3. The file the user started (Desktop, Downloads...) is kept identical to the repository's copy.
 # 4. After a change (and after the first clone), the window closes and the repository's copy of this file starts in a
 #    new window (WSL_RELAUNCHED stops a second restart).
-# 5. kit-opensmash\os_setup.ps1 of the repository does the rest (install, play, diag, dlc, unlock, lowspec).
+# 5. kit\ws_setup.ps1 of the repository does the rest (install, play, play-rollback, diag, unlock, optimize, dlc), and
+#    renames an old copy of this file and the old shortcuts.
 # Exit codes for the .bat: 0 done, 10 a failure already reported (it paused), 20 restarted in a new window.
 # Test-only environment: WSL_NO_RELAUNCH=1 (carry on in the same window after an update), WSL_REPO_URL (another remote),
 # WSL_CLONE_DIR (another clone folder; never fake LOCALAPPDATA instead).
-# Messages: English, or French when %LOCALAPPDATA%\WindowSmash-setup\lang.txt says fr (the kits' language option writes it).
+# Messages: English, or French when %LOCALAPPDATA%\WindowSmash-setup\lang.txt says fr (the kit's menu 8 writes it).
 param([string]$Self = '', [string]$KitDir = '', [string]$Mode = '')
 
 $Lang = 'en'
@@ -80,7 +83,7 @@ function Find-Git {
 function Ensure-Git {
     $git = Find-Git
     if ($git) { return $git }
-    Write-Host (L '  Git is not installed: installing it (it downloads and updates OpenSmash).' '  Git n''est pas installé : je l''installe (il sert à télécharger et mettre à jour OpenSmash).') -ForegroundColor Yellow
+    Write-Host (L '  Git is not installed: installing it (it downloads and updates OpenSmash Ultimate).' '  Git n''est pas installé : je l''installe (il sert à télécharger et mettre à jour OpenSmash Ultimate).') -ForegroundColor Yellow
     Write-Host (L '  An administrator window may open: accept it.' '  Une fenêtre administrateur peut s''ouvrir : accepte-la.')
     $wg = Get-Command winget -ErrorAction SilentlyContinue
     if ($wg) {
@@ -124,17 +127,16 @@ function Run-Git([string[]]$a) {
     return $out
 }
 
-Write-Host 'OpenSmash Launcher' -ForegroundColor Cyan
+Write-Host 'OpenSmash Ultimate Launcher' -ForegroundColor Cyan
 $Script:Git = Ensure-Git
 $updated = $false
-# (a clone made by the WindowSmash launcher before kit-opensmash existed is not cloned again: the update below brings it)
-if (-not (Test-Path -LiteralPath (Join-Path $Clone '.git')) -or -not ((Test-Path -LiteralPath (Join-Path $Clone 'kit-opensmash\os_setup.ps1')) -or (Test-Path -LiteralPath (Join-Path $Clone 'kit\ws_setup.ps1')))) {
+if (-not (Test-Path -LiteralPath (Join-Path $Clone '.git')) -or -not (Test-Path -LiteralPath (Join-Path $Clone 'kit\ws_setup.ps1'))) {
     Write-Host (L '  First start: downloading the launcher...' '  Premier lancement : téléchargement du launcher...')
     if (Test-Path -LiteralPath $Clone) {       # an attempt that stopped half way, or a damaged copy: emptied (the folder itself may be in use)
         try { Get-ChildItem -LiteralPath $Clone -Force | Remove-Item -Recurse -Force } catch { Stop-Boot (L "cannot empty $Clone ($($_.Exception.Message))" "impossible de vider $Clone ($($_.Exception.Message))") }
     }
     $ErrorActionPreference = 'Continue'; & $Script:Git clone --quiet $LauncherUrl $Clone | Out-Host; $code = $LASTEXITCODE; $ErrorActionPreference = 'Stop'
-    if ($code -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $Clone 'kit-opensmash\os_setup.ps1'))) { Stop-Boot (L "git clone of $LauncherUrl failed (code $code)" "git clone de $LauncherUrl a échoué (code $code)") }
+    if ($code -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $Clone 'kit\ws_setup.ps1'))) { Stop-Boot (L "git clone of $LauncherUrl failed (code $code)" "git clone de $LauncherUrl a échoué (code $code)") }
     $updated = $true
 } else {
     $before = (Run-Git @('-C', $Clone, 'rev-parse', 'HEAD')) | Select-Object -First 1
@@ -155,7 +157,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $Clone '.git')) -or -not ((Test-Path
 
 # cmd.exe misreads a batch file whose lines end with a bare LF (a test with such a copy ran fragments of its lines as
 # commands): a repository copy like that, or one without its boot part, is neither copied nor started.
-$repoBat = Join-Path $Clone 'OpenSmash Launcher.bat'
+$repoBat = Join-Path $Clone 'OpenSmash Ultimate Launcher.bat'
 $repoOk = $false
 try {
     $rt = [IO.File]::ReadAllText($repoBat)
@@ -184,8 +186,6 @@ if ($repoOk -and $updated -and -not $env:WSL_RELAUNCHED -and -not $env:WSL_NO_RE
 }
 
 $kitDir = if ($env:WSL_KITDIR) { $env:WSL_KITDIR } else { $KitDir }
-$osKit = Join-Path $Clone 'kit-opensmash\os_setup.ps1'
-if (-not (Test-Path -LiteralPath $osKit)) { Stop-Boot (L 'the launcher could not download its OpenSmash part' 'le launcher n''a pas pu télécharger sa partie OpenSmash') }
-& $osKit -KitDir $kitDir -Mode $Mode
+& (Join-Path $Clone 'kit\ws_setup.ps1') -KitDir $kitDir -Mode $Mode
 exit $LASTEXITCODE
 #@@END boot.ps1
