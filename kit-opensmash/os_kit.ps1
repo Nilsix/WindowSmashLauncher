@@ -85,6 +85,7 @@ function Hint([string]$code) {
         'E11' { L "OpenSmash could not be set to the right version. Check the internet connection. If you changed files in its folder, delete the folder and install again." "Impossible de mettre OpenSmash à la bonne version. Vérifie internet. Si tu as modifié des fichiers de son dossier, supprime le dossier et réinstalle." }
         'E12' { L "Git is missing: start the launcher again (it installs Git)." "Git manque : relance le launcher (il installe Git)." }
         'E13' { L "Cloning OpenSmash failed. Check the internet connection (is github.com reachable?), then start again." "Le clonage d'OpenSmash a échoué. Vérifie internet (github.com accessible ?) puis relance." }
+        'E15' { L "Plug in the disk your game files are on (base game, update, prod.keys), then start the launcher again." "Branche le disque où sont tes fichiers du jeu (jeu de base, mise à jour, prod.keys), puis relance le launcher." }
         'E14' { L "Plug in the disk OpenSmash is on (a USB disk?), then start the launcher again." "Branche le disque où est OpenSmash (un disque USB ?), puis relance le launcher." }
         'E23' { L "The OpenSmash folder is in OneDrive: choose another place." "Le dossier OpenSmash est dans OneDrive : choisis un autre endroit." }
         'E31' { L "OpenSmash's private Python could not be set up (it is downloaded from python.org): check the internet connection, then start again." "Le Python privé d'OpenSmash n'a pas pu être installé (téléchargé depuis python.org) : vérifie internet puis relance." }
@@ -268,10 +269,50 @@ function Get-Head {
 }
 
 # ---- the OpenSmash folder -------------------------------------------------------------------------------------------
-function Test-RepoDir([string]$d) { return ($d -and (Test-Path -LiteralPath ([IO.Path]::Combine($d, 'scripts\install.py'))) -and (Test-Path -LiteralPath ([IO.Path]::Combine($d, 'runtime')))) }   # (Join-Path fails on a drive that is not there)
+# A folder path as the kits keep it: trimmed, without a last backslash ("D:\My Games\x\" would reach git as
+# "D:\My Games\x\"" and its \" would swallow the closing quote), a drive root kept as 'D:\'.
+function Get-CleanFolder([string]$p) {
+    $p = "$p".Trim().Trim('"')
+    if ($p -match '^[A-Za-z]:[\\/]*$') { return $p.Substring(0, 2) + '\' }
+    return $p.TrimEnd('\', '/')
+}
+
+# The install folder the player typed, browsed to or took by default, as a full path; $null after a W13 that says why.
+# Never relative (it would land in the launcher's own folder), never a network folder, never [ ] (PowerShell reads them
+# as wildcards: the game could not start from there).
+function Get-InstallFolder([string]$t, [bool]$typed) {
+    if ($typed) {
+        $t = [Environment]::ExpandEnvironmentVariables("$t".Trim().Trim('"'))
+        if ($t -match '^[A-Za-z]:$') { $t += '\' }      # ("D:" alone: that disk, never its current folder)
+        if ($t -notmatch '^([A-Za-z]:[\\/]|\\\\|//)') { Warn (L "W13 type a whole path, with its disk (for example D:\Games\OpenSmash): $t" "W13 tape un chemin complet, avec son disque (par exemple D:\Jeux\OpenSmash) : $t"); return $null }
+    }
+    try { $t = [IO.Path]::GetFullPath($t) } catch { Warn (L "W13 invalid path: $t" "W13 chemin invalide : $t"); return $null }
+    if ($t.StartsWith('\\')) { Warn (L "W13 a network folder cannot be used: choose a folder on a disk of this PC ($t)" "W13 un dossier réseau ne convient pas : choisis un dossier sur un disque de ce PC ($t)"); return $null }
+    if ($t -match '[\[\]]') { Warn (L "W13 no [ or ] in the folder's path, please: choose another folder ($t)" "W13 pas de [ ni de ] dans le chemin du dossier : choisis un autre dossier ($t)"); return $null }
+    return (Get-CleanFolder $t)
+}
+
+# $true when git clone can work there: a folder made in it, a file in that folder (a protected folder would fail the
+# clone with an unclear message). Never a file in the folder itself: a drive root such as C:\ takes folders from a
+# standard user, not files.
+function Test-Writable([string]$d) {
+    if (-not $d -or -not [IO.Directory]::Exists($d)) { return $false }      # (CreateDirectory would make the missing folders on the way)
+    $p = [IO.Path]::Combine($d, ".write-test-$PID")
+    try { [void][IO.Directory]::CreateDirectory($p); [IO.File]::WriteAllText([IO.Path]::Combine($p, 'x.tmp'), 'x'); return $true }
+    catch { return $false }
+    finally { try { if ([IO.Directory]::Exists($p)) { [IO.Directory]::Delete($p, $true) } } catch { } }
+}
+
+# $true when a folder holds anything, or cannot be read (then it is not used as an empty one)
+function Test-NotEmpty([string]$d) { try { return [bool](Get-ChildItem -LiteralPath $d -Force -ErrorAction Stop | Select-Object -First 1) } catch { return $true } }
+
+function Test-RepoDir([string]$d) {      # (never Join-Path: it fails on a drive that is not there; Combine fails on | < > in a damaged opensmash-repo.txt)
+    if (-not $d) { return $false }
+    try { return ((Test-Path -LiteralPath ([IO.Path]::Combine($d, 'scripts\install.py'))) -and (Test-Path -LiteralPath ([IO.Path]::Combine($d, 'runtime')))) } catch { return $false }
+}
 
 function Get-RememberedRepo {
-    if (Test-Path -LiteralPath $RepoTxt) { $p = (Get-Content -LiteralPath $RepoTxt -Raw).Trim(); if (Test-RepoDir $p) { return $p } }
+    if (Test-Path -LiteralPath $RepoTxt) { $p = Get-CleanFolder "$(Get-Content -LiteralPath $RepoTxt -Raw)"; if (Test-RepoDir $p) { return $p } }
     return $null
 }
 
@@ -308,14 +349,16 @@ function Get-DefaultInstallDir {
     # next to OpenSmash Ultimate when it is installed and its disk has room (its folder's neighbour, else that disk's
     # Games\OpenSmash: the disk the player chose for the first game, often the internal SSD), else on the local disk with
     # the most free space (that can be a USB hard disk)
+    $Script:DefNextToWs = $false
     $ws = Get-WsRepo
     if ($ws) {
         $root = [IO.Path]::GetPathRoot("$ws\")       # (Get-WsRepo trims the last \: "D:" alone would be relative)
         $free = try { (New-Object IO.DriveInfo $root).AvailableFreeSpace / 1GB } catch { 0 }
         if ($free -ge $NEED_GB) {
             $parent = try { [IO.Path]::GetDirectoryName($ws) } catch { $null }       # (Split-Path throws on "D:")
-            foreach ($t in @($(if ($parent) { [IO.Path]::Combine($parent, 'OpenSmash') }), [IO.Path]::Combine($root, 'Games\OpenSmash'))) {
-                if ($t -and -not (Test-Path -LiteralPath $t) -and -not (Test-Under $t "$ws\")) { return $t }
+            $sib = if ($parent) { [IO.Path]::Combine($parent, 'OpenSmash') } else { $null }
+            foreach ($t in @($sib, [IO.Path]::Combine($root, 'Games\OpenSmash'))) {
+                if ($t -and -not (Test-Path -LiteralPath $t) -and -not (Test-Under $t "$ws\")) { $Script:DefNextToWs = ($t -eq $sib); return $t }
             }
         }
     }
@@ -344,20 +387,21 @@ function Find-Repo([bool]$allowClone) {
         $def = Get-DefaultInstallDir
         while (-not $Script:Repo) {
             Say (L "  Where to install OpenSmash? About $NEED_GB GB free are needed, outside OneDrive. An OpenSmash folder you already have works too." "  Où installer OpenSmash ? Il faut environ $NEED_GB Go libres, hors OneDrive. Un dossier OpenSmash que tu as déjà marche aussi.")
-            $a = "$(Read-Host (L "  Folder [$def] (Enter = OK, B = browse, or type a path)" "  Dossier [$def] (Entrée = OK, P = parcourir, ou tape un chemin)"))".Trim()
-            if (-not $a) { $t = $def }
-            elseif ($a -match '^[bBpP]$') { $f = Pick-Folder (L 'Choose where to install OpenSmash' 'Choisis où installer OpenSmash'); if (-not $f) { continue }; $t = $f }
-            else { $t = $a.Trim('"') }
-            try { $t = [IO.Path]::GetFullPath($t) } catch { Warn (L "W13 invalid path: $t" "W13 chemin invalide : $t"); continue }
+            $next = if ($Script:DefNextToWs) { L ', next to OpenSmash Ultimate' ', à côté d''OpenSmash Ultimate' } else { '' }
+            $a = "$(Read-Host (L "  Folder [$def] (Enter = OK$next; B = browse, or type a path)" "  Dossier [$def] (Entrée = OK$next ; P = parcourir, ou tape un chemin)"))".Trim()
+            if (-not $a) { $t = Get-InstallFolder $def $false }
+            elseif ($a -match '^[bBpP]$') { $f = Pick-Folder (L 'Choose where to install OpenSmash' 'Choisis où installer OpenSmash'); if (-not $f) { continue }; $t = Get-InstallFolder $f $false }
+            else { $t = Get-InstallFolder $a $true }
+            if (-not $t) { continue }
             if ($t -match 'OneDrive') { Warn (L 'W23 not in OneDrive: choose another folder' 'W23 pas dans OneDrive : choisis un autre dossier'); continue }
             $ws = Get-WsRepo       # (OpenSmash Ultimate's folder is a git checkout of its own: nothing else goes inside)
             if (Test-Under $t $ws) { Warn (L "W13 $t is inside OpenSmash Ultimate's folder ($ws): choose another folder" "W13 $t est dans le dossier d'OpenSmash Ultimate ($ws) : choisis un autre dossier"); continue }
             if (Test-RepoDir $t) { $Script:Repo = $t; break }
-            if ((Test-Path -LiteralPath $t) -and (([IO.Path]::GetPathRoot($t) -eq $t) -or (Get-ChildItem -LiteralPath $t -Force | Select-Object -First 1))) {
+            if ((Test-Path -LiteralPath $t) -and (([IO.Path]::GetPathRoot($t) -eq $t) -or (Test-NotEmpty $t))) {
                 $t = [IO.Path]::Combine($t, 'OpenSmash')              # (a disk, or a folder with other things in it: OpenSmash goes inside)
                 if (Test-Under $t $ws) { Warn (L "W13 $t is inside OpenSmash Ultimate's folder ($ws): choose another folder" "W13 $t est dans le dossier d'OpenSmash Ultimate ($ws) : choisis un autre dossier"); continue }
                 if (Test-RepoDir $t) { $Script:Repo = $t; break }
-                if ((Test-Path -LiteralPath $t) -and (Get-ChildItem -LiteralPath $t -Force | Select-Object -First 1)) {
+                if ((Test-Path -LiteralPath $t) -and (Test-NotEmpty $t)) {
                     Warn (L "W13 $t already exists and is not empty: choose another folder" "W13 $t existe déjà et n'est pas vide : choisis un autre dossier"); continue
                 }
             }
@@ -367,6 +411,8 @@ function Find-Repo([bool]$allowClone) {
             if ($parent -and -not (Test-Path -LiteralPath $parent)) {
                 try { New-Item -ItemType Directory -Force $parent -ErrorAction Stop | Out-Null } catch { Warn (L "W13 $parent cannot be made ($($_.Exception.Message)): choose another folder" "W13 impossible de créer $parent ($($_.Exception.Message)) : choisis un autre dossier"); continue }
             }
+            $w = if (Test-Path -LiteralPath $t) { $t } else { $parent }
+            if ($w -and -not (Test-Writable $w)) { Warn (L "W13 files cannot be written in $w (a protected folder?): choose another folder" "W13 impossible d'écrire dans $w (un dossier protégé ?) : choisis un autre dossier"); continue }
             Say (L "  Cloning OpenSmash into $t ..." "  Clonage d'OpenSmash dans $t ...")
             $out = @(Run-Native { & $Script:Git clone $OS_GIT_URL $t 2>&1 })
             if ($LASTEXITCODE -ne 0 -or -not (Test-RepoDir $t)) { Set-Step 'Folder' 'FAILED' 'git clone'; Fail 'E13' "git clone $(L 'failed' 'a échoué') : $(Get-GitError $out)" }
@@ -456,6 +502,16 @@ function Ask-Inputs([bool]$quiet = $false) {
     Title (L 'Game files (yours, dumped from your console)' 'Fichiers du jeu (les tiens, dumpés de ta console)')
     $prev = Load-Inputs
     $have = { param($p) $p -and (Test-Path -LiteralPath $p) }
+    $gone = @()
+    if ($prev) {
+        $gone = @(@($prev.base, $prev.prodkeys, $prev.update) | Where-Object { $_ } | ForEach-Object { Get-MissingRoot "$_" } | Where-Object { $_ } | Select-Object -Unique)
+        if ($gone.Count) {
+            Warn (L "W15 your game files of last time are on $($gone -join ', '), a disk that is not connected now" "W15 tes fichiers du jeu de la dernière fois sont sur $($gone -join ', '), un disque qui n'est pas branché")
+            if (-not (Ask-YesNo (L '  Choose the files again, somewhere else? (n = stop here, plug the disk in and start again)' '  Rechoisir les fichiers ailleurs ? (n = arrêter ici, brancher le disque et relancer)') $false)) {
+                Set-Step 'Files' 'FAILED' 'disk not connected'; Fail 'E15' (L "the game files are on $($gone -join ', '), not connected" "les fichiers du jeu sont sur $($gone -join ', '), pas branché")
+            }
+        }
+    }
     if ($prev -and (& $have $prev.base) -and (Test-UpdateFile $prev.base)) {
         Warn (L "W41 the base game chosen last time is the $EXPECT_VERSION update ($($prev.base)): choose the files again, the base game 1.0.0 too" "W41 le jeu de base choisi la dernière fois est la mise à jour $EXPECT_VERSION ($($prev.base)) : choisis de nouveau les fichiers, avec le jeu de base 1.0.0")
         $prev.base = $null
@@ -485,13 +541,13 @@ function Ask-Inputs([bool]$quiet = $false) {
             return
         }
     }
-    if ($prev -and -not (& $have $prev.base)) {
+    if ($prev -and -not (& $have $prev.base) -and -not $gone.Count) {
         # (OpenSmash Ultimate keeps only its unpacked copy of the game once its files have moved: OpenSmash's installer
         # reads the original package, scripts\romfs_extract.py decrypting it, and cannot use that copy)
         Say (L '  OpenSmash needs your original base game file (version 1.0.0, .xci or .nsp): the copy OpenSmash Ultimate keeps cannot be used.' '  OpenSmash a besoin du fichier d''origine du jeu de base (version 1.0.0, .xci ou .nsp) : la copie gardée par OpenSmash Ultimate ne peut pas servir.')
     }
     $Script:Inputs = @{}
-    if ($prev) { $Script:Inputs.titlekeys = $prev.titlekeys; $Script:Inputs.firmware = $prev.firmware }   # (kit\ws_setup.ps1's, kept)
+    if ($prev) { $Script:Inputs.titlekeys = $prev.titlekeys; $Script:Inputs.firmware = $prev.firmware; $Script:Inputs.dlc = $prev.dlc }   # (kit\ws_setup.ps1's and the DLC folder (shared): kept)
     $k = Pick-File (L '1/3 - Choose your prod.keys file' '1/3 - Choisis ton fichier prod.keys') (L 'Keys (prod.keys)|prod.keys;*.keys|All files|*.*' 'Clés (prod.keys)|prod.keys;*.keys|Tous les fichiers|*.*') ''
     if (-not $k) { Fail 'E40' (L 'prod.keys not chosen' 'prod.keys non choisi') }
     $Script:Inputs.prodkeys = $k
@@ -505,7 +561,8 @@ function Ask-Inputs([bool]$quiet = $false) {
     $u = Pick-File (L "3/3 - Choose Smash Ultimate's $EXPECT_VERSION UPDATE (.nsp)" "3/3 - Choisis la MISE À JOUR $EXPECT_VERSION de Smash Ultimate (.nsp)") (L 'Update (*.nsp)|*.nsp|All files|*.*' 'Mise à jour (*.nsp)|*.nsp|Tous les fichiers|*.*') $b
     if (-not $u) { Fail 'E40' (L 'update not chosen' 'mise à jour non choisie') }
     $Script:Inputs.update = $u
-    if (Ask-YesNo (L '  Do you have DLC (fighters) as .nsp or .nsz files in a folder? (optional; for netplay, have the same ones)' '  As-tu des DLC (combattants) en .nsp ou .nsz dans un dossier ? (optionnel ; pour le netplay, ayez les mêmes)') $false) {
+    if ($Script:Inputs.dlc -and (Test-Path -LiteralPath $Script:Inputs.dlc -PathType Container)) { Say (L "  DLC folder kept: $($Script:Inputs.dlc) (8 > 5 changes it)" "  Dossier des DLC gardé : $($Script:Inputs.dlc) (8 > 5 le change)") }
+    elseif (Ask-YesNo (L '  Do you have DLC (fighters) as .nsp or .nsz files in a folder? (optional; for netplay, have the same ones)' '  As-tu des DLC (combattants) en .nsp ou .nsz dans un dossier ? (optionnel ; pour le netplay, ayez les mêmes)') $false) {
         $d = Pick-Folder (L 'Choose the folder that holds the DLC (.nsp, .nsz)' 'Choisis le dossier qui contient les DLC (.nsp, .nsz)')
         if ($d) { $Script:Inputs.dlc = $d }
     }
@@ -519,6 +576,24 @@ function Get-DlcFiles {
     if (-not ($Script:Inputs.dlc -and (Test-Path -LiteralPath $Script:Inputs.dlc -PathType Container))) { return @() }
     $d = (Resolve-Path -LiteralPath $Script:Inputs.dlc).Path
     return @(@($d) + @(Get-ChildItem -LiteralPath $d -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.nsp', '.nsz' } | ForEach-Object { $_.FullName }))
+}
+
+# What install.py gets as --dlc: the folder, then below it one package per Smash DLC id (F001-FFFF; never the base game,
+# the update or other games' packages a Switch folder also holds), within a bound: Windows refuses a command line over
+# 32767 characters, and a drive root full of dumps would pass it.
+function Get-DlcArgs {
+    $all = @(Get-DlcFiles)
+    if (-not $all.Count) { return @() }
+    $out = @($all[0]); $seen = @{}; $len = $all[0].Length
+    foreach ($f in @($all | Select-Object -Skip 1 | Sort-Object)) {
+        $m = [regex]::Match([IO.Path]::GetFileName($f), '\[(01006[Aa]800016[Ff][0-9A-Fa-f]{3})\]')
+        if (-not $m.Success) { continue }
+        $id = $m.Groups[1].Value.ToUpper()
+        if ($id -eq '01006A800016F000' -or $seen.ContainsKey($id)) { continue }
+        if ($len + $f.Length + 10 -gt 24000) { Warn (L "W45 too many DLC packages in $($all[0]): $($seen.Count) given to the installer, the rest left out (choose a folder with only Smash's DLC: 8 > 5)" "W45 trop de paquets DLC dans $($all[0]) : $($seen.Count) donnés à l'installateur, le reste laissé (choisis un dossier avec seulement les DLC de Smash : 8 > 5)"); break }
+        $seen[$id] = $true; $out += $f; $len += $f.Length + 10
+    }
+    return $out
 }
 
 # The DLC ids those names hold (install.py's dlc_rows rule: [01006A800016F001] to [01006A800016FFFF])
@@ -615,7 +690,7 @@ function Get-RebuildStep {
 function Invoke-OsInstall([string[]]$extra, [string]$name) {
     $argv = @('-u', (Join-Path $Script:Repo 'scripts\install.py'), '--no-gui', '--no-self-update', '--no-shortcuts',
               '--base', $Script:Inputs.base, '--update', $Script:Inputs.update, '--keys', $Script:Inputs.prodkeys)
-    $dlc = @(Get-DlcFiles)
+    $dlc = @(Get-DlcArgs)
     foreach ($f in $dlc) { $argv += @('--dlc', $f) }
     if ($Script:Inputs.firmware -and (Test-Path -LiteralPath $Script:Inputs.firmware -PathType Container)) { $argv += @('--firmware', $Script:Inputs.firmware) }
     if ($dlc.Count) { Remove-Item Env:SSBU_DLC_LIST -ErrorAction SilentlyContinue }
@@ -772,7 +847,7 @@ function Set-Shortcuts {
         try {
             foreach ($n in @('SSBU native.lnk', 'SSBU native - Installer.lnk')) {
                 $p = Join-Path $dir $n
-                if ((Test-Path -LiteralPath $p) -and ($sh.CreateShortcut($p).TargetPath -like "$($Script:Repo)\*")) { Remove-Item -LiteralPath $p -Force; Log "removed $p" }
+                if ((Test-Path -LiteralPath $p) -and (Test-Under $sh.CreateShortcut($p).TargetPath $Script:Repo)) { Remove-Item -LiteralPath $p -Force; Log "removed $p" }
             }
             $lnk = $sh.CreateShortcut((Join-Path $dir 'Smash Ultimate (OpenSmash).lnk'))
             $lnk.TargetPath = $LauncherBat; $lnk.Arguments = 'os-play'; $lnk.WorkingDirectory = $Clone
@@ -1001,7 +1076,8 @@ function Diagnose-Game {
         $p = Join-Path $work $r
         if (Test-Path -LiteralPath $p) {
             $f = Get-Item -LiteralPath $p
-            $t = Get-Content -LiteralPath $p -Raw
+            $t = try { "$(Get-Content -LiteralPath $p -Raw -ErrorAction Stop)" } catch { [void]$Script:Extra.Add("--- ${r}: unreadable ($($_.Exception.Message))"); continue }
+            if (-not "$t".Trim()) { [void]$Script:Extra.Add("--- ${r}: empty"); continue }      # (Get-Content -Raw gives $null for an empty file)
             $k = $t.LastIndexOf('=== ')          # the newest report: its header and first lines (the module list follows)
             [void]$Script:Extra.Add("--- $r ($($f.LastWriteTime.ToString('yyyy-MM-dd HH:mm')), newest report)")
             foreach ($x in (($t.Substring([math]::Max(0, $k)) -split "`r?`n") | Select-Object -First 40)) { [void]$Script:Extra.Add($x) }
@@ -1106,7 +1182,7 @@ function Start-Game {
     if ($online) { Say (L "  Online play: back on the public lobby (it was '$online' in F1 > Experimental; a room code only works while that host's game is open). Use Local Wireless > Rooms list." "  Jeu en ligne : remis sur le lobby public (c'était '$online' dans F1 > Experimental ; un code de room ne marche que tant que le jeu de cet hôte est ouvert). Utilise Local Wireless > liste des rooms.") }
     $gameLog = { Get-ChildItem -LiteralPath (Join-Path (Get-BuildDir) 'logs') -Filter 'game_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1 | ForEach-Object { $_.FullName } }
     try {
-        $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', "`"`"$play`"`"" -WorkingDirectory $Script:Repo -PassThru
+        $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', "`"`"$play`"`"" -WorkingDirectory ([Management.Automation.WildcardPattern]::Escape($Script:Repo)) -PassThru
         $null = $p.Handle      # (Windows PowerShell 5.1 loses the exit code of a process whose handle was never asked for)
         for ($i = 0; $i -lt 120 -and -not $p.HasExited -and -not (Get-Process ssbu_native -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
         if (-not (Get-Process ssbu_native -ErrorAction SilentlyContinue)) {

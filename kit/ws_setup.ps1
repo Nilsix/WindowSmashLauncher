@@ -17,6 +17,12 @@
 # its own; an OpenSmash install is no longer offered for deletion, and its old play shortcut starts it again (os-play).
 # Kit 4.4.1: an install folder directly under a drive root (D:\OpenSmash, or Browse to D:\) no longer stops with E99
 # (New-Item -Force on a root throws in PowerShell 5.1).
+# Kit 4.4.2: pin 078e055 (rollback on by default in private rooms too). Install folders: Enter says when the default is
+# next to OpenSmash Ultimate; typed paths must be whole ("D:" = that disk, %VARS% expanded), never a network folder or
+# [ ]; a write test before git clone (a folder, then a file: C:\ takes only folders); OpenSmash at a drive root no longer
+# breaks the default folder; repo.txt on an unplugged disk is W14/E14, never "not installed". OpenSmash: game files on
+# an unplugged disk are W15/E15, the DLC folder is kept when the files are chosen again, install.py gets the DLC folder
+# plus one package per Smash DLC id (bounded), an empty crash report no longer stops the diagnosis.
 # This file must stay UTF-8 with a BOM (Windows PowerShell 5.1 reads a BOM-less file as ANSI).
 # A complete installer: it installs what is missing (Git, Python 3.14, Visual Studio Build Tools, LLVM, Opus), clones
 # OpenSmash Ultimate, prepares the user's own game files and builds the game.
@@ -33,14 +39,14 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '4.4.1 (2026-11-05)'
+$KitVersion = '4.4.2 (2026-11-05)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
 # (WindowSmash, github.com/OpenSmash-Ultimate/WindowSmash, pinned at 8025b48 by kits 3.x, and OpenSmash merged on
 # 2026-11-03 into one repository whose history goes on from WindowSmash's: a WindowSmash folder moves to it with git)
 $WS_GIT_URL  = 'https://github.com/OpenSmash-Ultimate/OpenSmash-Ultimate.git'
 $WS_OLD_URL  = '(?i)github\.com[/:](SNO2207|OpenSmash-Ultimate)/WindowSmash(\.git)?/?$'   # where kits 1.x to 3.x cloned WindowSmash from
-$WS_COMMIT   = '6c38207500a0cf973559b40fc22d88d54e359a60'   # main, 2026-11-04: "Rollback on by default online; live controllers in rollback" (#147)
+$WS_COMMIT   = '078e05533d53100ce89186a9cff61630420e6429'   # main, 2026-11-05: rollback on by default in private rooms too (#148); setup link (#157)
 $WS_BRANCH   = 'main'
 $WS_ZIP      = "https://codeload.github.com/OpenSmash-Ultimate/OpenSmash-Ultimate/zip/$WS_COMMIT"
 $WS_FILES    = @{   # SHA-256 (line ends as LF) of files of that commit: a copy without git is checked with them
@@ -93,6 +99,7 @@ function Hint([string]$code) {
         'E11' { L "OpenSmash Ultimate could not be set to the right version. Check the internet connection. If you changed files in the folder, download it again." "Impossible de mettre OpenSmash Ultimate à la bonne version. Vérifie internet. Si tu as modifié des fichiers du dossier, retélécharge-le." }
         'E12' { L "Git could not be installed. Install it from git-scm.com (default options), then start again." "Git n'a pas pu être installé. Installe-le depuis git-scm.com (options par défaut) puis relance." }
         'E13' { L "Cloning OpenSmash Ultimate failed. Check the internet connection (is github.com reachable?), then start again." "Le clonage d'OpenSmash Ultimate a échoué. Vérifie internet (github.com accessible ?) puis relance." }
+        'E14' { L "Plug in the disk OpenSmash Ultimate is on (a USB disk?), then start the launcher again." "Branche le disque où est OpenSmash Ultimate (un disque USB ?), puis relance le launcher." }
         'E15' { L "The tools needed were not installed (refused). Start again and answer Y to install them." "Les outils nécessaires n'ont pas été installés (refusé). Relance et réponds O pour les installer." }
         'E20' { L "Windows 10 or 11, 64-bit, is needed." "Il faut Windows 10 ou 11 en 64 bits." }
         'E21' { L "Your processor lacks the AVX2/FMA/F16C instructions: the game cannot run on this PC." "Ton processeur n'a pas les instructions AVX2/FMA/F16C : le jeu ne peut pas tourner sur ce PC." }
@@ -624,7 +631,55 @@ function Show-Prereqs {
 }
 
 # ---- repository -----------------------------------------------------------------------------
-function Test-RepoDir([string]$d) { return ($d -and (Test-Path -LiteralPath (Join-Path $d 'tools\recomp.py')) -and (Test-Path -LiteralPath (Join-Path $d 'runtime'))) }
+function Test-RepoDir([string]$d) {      # (never Join-Path: it fails on a drive that is not there, an unplugged USB disk)
+    if (-not $d) { return $false }
+    try { return ((Test-Path -LiteralPath ([IO.Path]::Combine($d, 'tools\recomp.py'))) -and (Test-Path -LiteralPath ([IO.Path]::Combine($d, 'runtime')))) } catch { return $false }
+}
+
+# A folder path as the kits keep it: trimmed, without a last backslash ("D:\My Games\x\" would reach git as
+# "D:\My Games\x\"" and its \" would swallow the closing quote), a drive root kept as 'D:\'.
+function Get-CleanFolder([string]$p) {
+    $p = "$p".Trim().Trim('"')
+    if ($p -match '^[A-Za-z]:[\\/]*$') { return $p.Substring(0, 2) + '\' }
+    return $p.TrimEnd('\', '/')
+}
+
+# The root of a path's disk when that disk is not connected now (an unplugged USB disk), else $null
+function Get-MissingRoot([string]$p) {
+    if (-not $p) { return $null }
+    try { $r = [IO.Path]::GetPathRoot($p) } catch { return $null }
+    if ($r -match '^[A-Za-z]:\\?$' -and -not (Test-Path -LiteralPath ($r.Substring(0, 2) + '\'))) { return $r.Substring(0, 2) + '\' }
+    return $null
+}
+
+# The install folder the player typed, browsed to or took by default, as a full path; $null after a W13 that says why.
+# Never relative (it would land in the launcher's own folder), never a network folder, never [ ] (PowerShell reads them
+# as wildcards).
+function Get-InstallFolder([string]$t, [bool]$typed) {
+    if ($typed) {
+        $t = [Environment]::ExpandEnvironmentVariables("$t".Trim().Trim('"'))
+        if ($t -match '^[A-Za-z]:$') { $t += '\' }      # ("D:" alone: that disk, never its current folder)
+        if ($t -notmatch '^([A-Za-z]:[\\/]|\\\\|//)') { Warn (L "W13 type a whole path, with its disk (for example D:\Games\OpenSmash-Ultimate): $t" "W13 tape un chemin complet, avec son disque (par exemple D:\Jeux\OpenSmash-Ultimate) : $t"); return $null }
+    }
+    try { $t = [IO.Path]::GetFullPath($t) } catch { Warn (L "W13 invalid path: $t" "W13 chemin invalide : $t"); return $null }
+    if ($t.StartsWith('\\')) { Warn (L "W13 a network folder cannot be used: choose a folder on a disk of this PC ($t)" "W13 un dossier réseau ne convient pas : choisis un dossier sur un disque de ce PC ($t)"); return $null }
+    if ($t -match '[\[\]]') { Warn (L "W13 no [ or ] in the folder's path, please: choose another folder ($t)" "W13 pas de [ ni de ] dans le chemin du dossier : choisis un autre dossier ($t)"); return $null }
+    return (Get-CleanFolder $t)
+}
+
+# $true when git clone can work there: a folder made in it, a file in that folder (a protected folder would fail the
+# clone with an unclear message). Never a file in the folder itself: a drive root such as C:\ takes folders from a
+# standard user, not files.
+function Test-Writable([string]$d) {
+    if (-not $d -or -not [IO.Directory]::Exists($d)) { return $false }      # (CreateDirectory would make the missing folders on the way)
+    $p = [IO.Path]::Combine($d, ".write-test-$PID")
+    try { [void][IO.Directory]::CreateDirectory($p); [IO.File]::WriteAllText([IO.Path]::Combine($p, 'x.tmp'), 'x'); return $true }
+    catch { return $false }
+    finally { try { if ([IO.Directory]::Exists($p)) { [IO.Directory]::Delete($p, $true) } } catch { } }
+}
+
+# $true when a folder holds anything, or cannot be read (then it is not used as an empty one)
+function Test-NotEmpty([string]$d) { try { return [bool](Get-ChildItem -LiteralPath $d -Force -ErrorAction Stop | Select-Object -First 1) } catch { return $true } }
 
 function Get-RepoZip([string]$target) {
     $zip = Join-Path $HomeDir "downloads\OpenSmash-Ultimate-$WS_COMMIT.zip"
@@ -639,7 +694,7 @@ function Get-RepoZip([string]$target) {
 }
 
 function Get-RememberedRepo {
-    if (Test-Path -LiteralPath $RepoTxt) { $p = (Get-Content -LiteralPath $RepoTxt -Raw).Trim(); if (Test-RepoDir $p) { return $p } }
+    if (Test-Path -LiteralPath $RepoTxt) { $p = Get-CleanFolder "$(Get-Content -LiteralPath $RepoTxt -Raw)"; if (Test-RepoDir $p) { return $p } }
     return $null
 }
 
@@ -672,13 +727,18 @@ function Get-DefaultInstallDir {
     $ssd = Get-SsdRoots
     $fast = $disks | Where-Object { $ssd -contains ($_.DeviceID + '\') -and $_.FreeSpace / 1GB -ge $NEED_GB } | Select-Object -First 1
     $root = if ($fast) { $fast.DeviceID + '\' } else { $null }
-    if ($os -and (-not $root -or $root -eq [IO.Path]::GetPathRoot($os.Repo))) {
-        $t = Join-Path (Split-Path $os.Repo -Parent) 'OpenSmash-Ultimate'
-        if (-not (Test-Under $t $os.Repo) -and -not (Test-Under $t $os.Build)) { return $t }
-        if (-not $root) { $root = [IO.Path]::GetPathRoot($os.Repo) }
+    $ok = { param($t) $t -and -not ($os -and ((Test-Under $t $os.Repo) -or (Test-Under $t $os.Build))) }     # (Find-Repo refuses OpenSmash's folders)
+    if ($os -and (-not $root -or $root -eq [IO.Path]::GetPathRoot("$($os.Repo)\"))) {
+        $p = try { [IO.Path]::GetDirectoryName($os.Repo) } catch { $null }      # ($null for a drive root: never Split-Path, which throws on 'E:')
+        if ($p) { $t = [IO.Path]::Combine($p, 'OpenSmash-Ultimate'); if (& $ok $t) { return $t } }
+        if (-not $root) { $root = [IO.Path]::GetPathRoot("$($os.Repo)\") }
     }
     if (-not $root) { $root = if ($disks) { $disks[0].DeviceID + '\' } else { 'C:\' } }
-    return (Join-Path $root 'Jeux\OpenSmash-Ultimate')
+    foreach ($r in @($root) + @($disks | ForEach-Object { $_.DeviceID + '\' })) {
+        $t = [IO.Path]::Combine($r, 'Jeux\OpenSmash-Ultimate')
+        if (& $ok $t) { return $t }
+    }
+    return $null      # (Find-Repo: Enter then browses)
 }
 
 function Clone-Repo([string]$target) {
@@ -697,25 +757,38 @@ function Find-Repo([bool]$allowClone) {
         if ($c -and (Test-RepoDir $c)) { $Script:Repo = (Resolve-Path -LiteralPath $c).Path; Say (L '  This file is in an OpenSmash Ultimate folder: using it.' '  Ce fichier est dans un dossier OpenSmash Ultimate : je l''utilise.'); break }
     }
     if (-not $Script:Repo) { $r = Get-RememberedRepo; if ($r) { $Script:Repo = $r; Say (L "  Previous install found: $r" "  Installation précédente trouvée : $r") } }
+    if (-not $Script:Repo -and (Test-Path -LiteralPath $RepoTxt)) {      # (its disk unplugged: never "not installed" without a word)
+        $was = Get-CleanFolder "$(Get-Content -LiteralPath $RepoTxt -Raw)"
+        $gone = Get-MissingRoot $was
+        if ($gone) {
+            Warn (L "W14 OpenSmash Ultimate is installed in $was, on a disk that is not connected now ($gone)" "W14 OpenSmash Ultimate est installé dans $was, sur un disque qui n'est pas branché ($gone)")
+            if ($Mode -eq 'diag') { return $null }      # (the report says so)
+            if ((-not $allowClone -or -not (Ask-YesNo (L '  Install OpenSmash Ultimate again somewhere else? (n = stop here, plug the disk in and start again)' '  Réinstaller OpenSmash Ultimate ailleurs ? (n = arrêter ici, brancher le disque et relancer)') $false))) {
+                Set-Step 'Folder' 'FAILED' 'disk not connected'; Fail 'E14' (L "OpenSmash Ultimate's disk ($gone) is not connected" "le disque d'OpenSmash Ultimate ($gone) n'est pas branché")
+            }
+        }
+    }
     if (-not $Script:Repo) {
         if (-not $allowClone) { Say (L '  OpenSmash Ultimate is not installed on this PC yet.' '  OpenSmash Ultimate n''est pas encore installé sur ce PC.'); return $null }
         $def = Get-DefaultInstallDir
         while (-not $Script:Repo) {
             Say (L "  Where to install OpenSmash Ultimate? About $NEED_GB GB free are needed, outside OneDrive." "  Où installer OpenSmash Ultimate ? Il faut environ $NEED_GB Go libres, hors OneDrive.")
-            $a = Read-Host (L "  Folder [$def] (Enter = OK, B = browse, or type a path)" "  Dossier [$def] (Entrée = OK, P = parcourir, ou tape un chemin)")
-            if (-not $a) { $t = $def }
+            $a = "$(Read-Host (L "  Folder [$def] (Enter = OK, B = browse, or type a path)" "  Dossier [$def] (Entrée = OK, P = parcourir, ou tape un chemin)"))".Trim()
+            if (-not $a -and -not $def) { $a = 'B' }      # (no default: Browse)
+            if (-not $a) { $t = Get-InstallFolder $def $false }
             elseif ($a -match '^[pPbB]$') {
                 $f = Pick-Folder (L 'Choose where to install (an OpenSmash-Ultimate folder is made there)' 'Choisis où installer (un dossier OpenSmash-Ultimate y sera créé)')
                 if (-not $f) { continue }
-                $t = Join-Path $f 'OpenSmash-Ultimate'
-            } else { $t = $a.Trim().Trim('"') }
-            try { $t = [IO.Path]::GetFullPath($t) } catch { Warn (L "W13 invalid path: $t" "W13 chemin invalide : $t"); continue }
+                $t = if (Test-RepoDir $f) { $f } else { [IO.Path]::Combine($f, 'OpenSmash-Ultimate') }     # (an OpenSmash Ultimate folder chosen: that one)
+                $t = Get-InstallFolder $t $false
+            } else { $t = Get-InstallFolder $a $true }
+            if (-not $t) { continue }
             if ([IO.Path]::GetPathRoot($t) -eq $t) { $t = [IO.Path]::Combine($t, 'OpenSmash-Ultimate') }     # (a disk typed: a folder on it, as Browse does)
             if ($t -match 'OneDrive') { Warn (L 'W23 not in OneDrive: choose another folder' 'W23 pas dans OneDrive : choisis un autre dossier'); continue }
             $os = Get-OldOpenSmash      # (OpenSmash's folders are its own: never install into them)
             if ($os -and ((Test-Under $t $os.Repo) -or (Test-Under $t $os.Build))) { Warn (L "W13 $t is inside the OpenSmash install (menu 8): choose another folder" "W13 $t est dans l'installation OpenSmash (menu 8) : choisis un autre dossier"); continue }
             if (Test-RepoDir $t) { $Script:Repo = $t; break }          # an OpenSmash Ultimate folder already there: used as it is
-            if ((Test-Path -LiteralPath $t) -and (Get-ChildItem -LiteralPath $t -Force | Select-Object -First 1)) {
+            if ((Test-Path -LiteralPath $t) -and (Test-NotEmpty $t)) {
                 Warn (L "W13 $t already exists and is not empty: choose another folder" "W13 $t existe déjà et n'est pas vide : choisis un autre dossier"); continue
             }
             try { $free = (New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($t))).AvailableFreeSpace / 1GB } catch { Warn (L "W13 no disk found for $t" "W13 disque introuvable pour $t"); continue }
@@ -724,6 +797,8 @@ function Find-Repo([bool]$allowClone) {
             if ($parent -and -not (Test-Path -LiteralPath $parent)) {
                 try { New-Item -ItemType Directory -Force $parent -ErrorAction Stop | Out-Null } catch { Warn (L "W13 $parent cannot be made ($($_.Exception.Message)): choose another folder" "W13 impossible de créer $parent ($($_.Exception.Message)) : choisis un autre dossier"); continue }
             }
+            $w = if (Test-Path -LiteralPath $t) { $t } else { $parent }
+            if ($w -and -not (Test-Writable $w)) { Warn (L "W13 files cannot be written in $w (a protected folder?): choose another folder" "W13 impossible d'écrire dans $w (un dossier protégé ?) : choisis un autre dossier"); continue }
             Clone-Repo $t
             $Script:Repo = $t
         }
@@ -735,8 +810,8 @@ function Find-Repo([bool]$allowClone) {
     if ($Script:Repo -match 'OneDrive') { Set-Step 'Folder' 'FAILED' 'in OneDrive'; Fail 'E23' (L "the folder is in OneDrive: $($Script:Repo)" "le dossier est dans OneDrive : $($Script:Repo)") }
     if ($Script:Repo -match '[^\x20-\x7E]') { Warn (L "W23 the folder's path holds accents or special characters: if something fails, move it to C:\Games\OpenSmash-Ultimate" "W23 le chemin du dossier contient des accents ou caractères spéciaux : en cas d'erreur, déplace-le vers C:\Jeux\OpenSmash-Ultimate") }
     $drive = (Get-Item -LiteralPath $Script:Repo).PSDrive
-    $freeGB = [math]::Round($drive.Free / 1GB, 1)
-    $Script:Info['Free disk'] = "$freeGB GB on $($drive.Name):"
+    if ($drive -and $null -ne $drive.Free) { $freeGB = [math]::Round($drive.Free / 1GB, 1); $Script:Info['Free disk'] = "$freeGB GB on $($drive.Name):" }
+    else { $freeGB = [double]::MaxValue; $Script:Info['Free disk'] = 'unknown (no drive letter)' }      # (never a false E22)
     Set-GitSafeRepo
     Set-Step 'Folder' 'OK' $Script:Repo
     return $freeGB
@@ -1099,9 +1174,10 @@ function Check-Inputs {
     Ok "$(L 'update' 'mise à jour') : version $($u.Json.display)"
     $Script:Inputs.update_version = $u.Json.display; Save-Inputs
     # space: the decrypted base (unless it is there already), the update's data (~4 GB), the build (~10 GB)
-    $free = (Get-Item -LiteralPath $Script:Repo).PSDrive.Free
+    $drive = (Get-Item -LiteralPath $Script:Repo).PSDrive
+    $free = if ($drive) { $drive.Free } else { $null }
     $need = 16GB + $(if (Test-PlainBase) { 0 } else { [int64]$b.Json.program_size })
-    if ($free -lt $need -and -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) {
+    if ($null -ne $free -and $free -lt $need -and -not (Test-Path -LiteralPath (Join-Path $Script:Repo 'build\ssbu.exe'))) {
         $hint = if (Test-Path -LiteralPath (Join-Path $Script:Repo $OLD_TREE)) { L " (the old $OLD_TREE folder can be deleted: copy its save folder first)" " (l'ancien dossier $OLD_TREE peut être supprimé : copie d'abord son dossier save)" } else { '' }
         Set-Step 'Files' 'FAILED' 'disk'; Fail 'E22' ((L "{0:N0} GB free are needed, there are {1:N0}{2}" "il faut {0:N0} Go libres, il y en a {1:N0}{2}") -f ($need / 1GB), ($free / 1GB), $hint)
     }
@@ -1289,7 +1365,7 @@ function Remove-OldTree {
     if (Test-Path -LiteralPath $oldSave) {
         $bk = Join-Path $Script:Repo "save_backups\$OLD_TREE-save-$Stamp"
         New-Item -ItemType Directory -Force $bk | Out-Null
-        Copy-Item -Path (Join-Path $oldSave '*') -Destination $bk -Recurse -Force
+        Get-ChildItem -LiteralPath $oldSave -Force | Copy-Item -Destination $bk -Recurse -Force
         $n1 = @(Get-ChildItem -LiteralPath $oldSave -Recurse -File -Force).Count
         $n2 = @(Get-ChildItem -LiteralPath $bk -Recurse -File -Force).Count
         if ($n2 -lt $n1) { Warn (L "W13 copy of the old save incomplete ($n2 files of $n1): $old kept" "W13 copie de l'ancienne sauvegarde incomplète ($n2 fichiers sur $n1) : $old gardé"); return }
@@ -1570,7 +1646,7 @@ function Start-Game {
             $si.CreateNoWindow = $true
             $p = [Diagnostics.Process]::Start($si)
         } else {      # (a folder still at kit 2.0-2.2's WindowSmash, 13.0.4: its Play SSBU.bat picks the version folder)
-            $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', ('""' + (Join-Path $Script:Repo 'Play SSBU.bat') + '""') -WorkingDirectory $Script:Repo -PassThru
+            $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', ('""' + (Join-Path $Script:Repo 'Play SSBU.bat') + '""') -WorkingDirectory ([Management.Automation.WildcardPattern]::Escape($Script:Repo)) -PassThru
         }
         $null = $p.Handle      # (Windows PowerShell 5.1 loses the exit code of a process whose handle was never asked for)
         Say (L '  The game window opens (game version, display, online, controllers): click Play to play.' '  La fenêtre du jeu s''ouvre (version du jeu, affichage, en ligne, manettes) : clique sur Play pour jouer.')
@@ -1589,7 +1665,7 @@ function Start-Game {
             Log "launcher.ps1: no window ($(if ($noWindow) { 'none after 60 s' } else { 'exit 2' })): the game started directly"
             Say (L '  The game window did not open: the game starts directly (your last settings).' '  La fenêtre du jeu ne s''est pas ouverte : le jeu démarre directement (tes derniers réglages).')
             $t0 = Get-Date
-            Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', 'build\ssbu.exe dump\modules --status 30 --online > build\play.log 2>&1' -WorkingDirectory $Script:Repo -WindowStyle Minimized
+            Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/c', 'build\ssbu.exe dump\modules --status 30 --online > build\play.log 2>&1' -WorkingDirectory ([Management.Automation.WildcardPattern]::Escape($Script:Repo)) -WindowStyle Minimized
         }
         for ($i = 0; $i -lt 10 -and -not (Get-Process ssbu -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
         if (-not (Get-Process ssbu -ErrorAction SilentlyContinue)) {
@@ -1627,7 +1703,7 @@ function Get-OldOpenSmash {
         if ($p) { $p = [Environment]::ExpandEnvironmentVariables($p); if (-not [IO.Path]::IsPathRooted($p)) { $p = [IO.Path]::Combine($r, $p) }; $b = $p }
     }
     $b = if ($b -match '^[A-Za-z]:\\*$') { $b.Substring(0, 2) + '\' } else { $b.TrimEnd('\') }    # (a drive root stays 'D:\', never 'D:')
-    return [pscustomobject]@{ Repo = $r.TrimEnd('\'); Build = $b; Save = [IO.Path]::Combine($b, 'saves\save') }   # (Join-Path fails on a drive that is not there)
+    return [pscustomobject]@{ Repo = (Get-CleanFolder $r); Build = $b; Save = [IO.Path]::Combine($b, 'saves\save') }   # (Join-Path fails on a drive that is not there)
 }
 
 # $true when the old install's build folder lies on a disk that is not there now (an unplugged USB disk)
