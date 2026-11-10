@@ -23,6 +23,10 @@
 # breaks the default folder; repo.txt on an unplugged disk is W14/E14, never "not installed". OpenSmash: game files on
 # an unplugged disk are W15/E15, the DLC folder is kept when the files are chosen again, install.py gets the DLC folder
 # plus one package per Smash DLC id (bounded), an empty crash report no longer stops the diagnosis.
+# Kit 4.5: pin 1a819b8. Online plays the game's own netcode again by default (#201: rollback was found unplayable between
+# two PCs); rollback is opt-in (Esc > Online > Rollback netcode on, both players), the own netcode's input delay can be
+# set by hand (Esc > Online > Input delay, #231). Renderer auto (Vulkan on AMD cards, Direct3D 11 elsewhere): the
+# display.ini written for a new install says so. SSBU_NET_BACKEND is cleared at start, as Play SSBU.bat now does.
 # This file must stay UTF-8 with a BOM (Windows PowerShell 5.1 reads a BOM-less file as ANSI).
 # A complete installer: it installs what is missing (Git, Python 3.14, Visual Studio Build Tools, LLVM, Opus), clones
 # OpenSmash Ultimate, prepares the user's own game files and builds the game.
@@ -39,20 +43,20 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '4.4.2 (2026-11-05)'
+$KitVersion = '4.5 (2026-11-10)'
 
 # ---- what the host's build was made from: the friend's must match it for netplay ------------
 # (WindowSmash, github.com/OpenSmash-Ultimate/WindowSmash, pinned at 8025b48 by kits 3.x, and OpenSmash merged on
 # 2026-11-03 into one repository whose history goes on from WindowSmash's: a WindowSmash folder moves to it with git)
 $WS_GIT_URL  = 'https://github.com/OpenSmash-Ultimate/OpenSmash-Ultimate.git'
 $WS_OLD_URL  = '(?i)github\.com[/:](SNO2207|OpenSmash-Ultimate)/WindowSmash(\.git)?/?$'   # where kits 1.x to 3.x cloned WindowSmash from
-$WS_COMMIT   = '078e05533d53100ce89186a9cff61630420e6429'   # main, 2026-11-05: rollback on by default in private rooms too (#148); setup link (#157)
+$WS_COMMIT   = '1a819b81b35b8ec3c0f4b0c6df3dab60eaf2244a'   # main, 2026-11-10: the game's own netcode by default, rollback opt-in (#201); input delay by hand (#231); renderer auto (#245)
 $WS_BRANCH   = 'main'
 $WS_ZIP      = "https://codeload.github.com/OpenSmash-Ultimate/OpenSmash-Ultimate/zip/$WS_COMMIT"
 $WS_FILES    = @{   # SHA-256 (line ends as LF) of files of that commit: a copy without git is checked with them
-    'tools\build_game.py' = '8740c8c8aef2190eeb96d0b8fd4c6d1542061cfe2140ad593fe18b93a5d5d6eb'
+    'tools\build_game.py' = '2b0f47cc63bc573c471ad4dd83d358487a0299d563571e506c34c949507c4ebc'
     'tools\update.py'     = '895ce9ee48621a194613ad60fe48ce6aa19db54b1832ce040531c0f04ff687d2'
-    'tools\recomp.py'     = '32c090ddbe23a379a1f59bbe8d68a448299c464c2143f8c154fc744380935b29'
+    'tools\recomp.py'     = 'dd1ba7dceea588b462c700a6ed0a13f930229bba671a4ed9f579e3019ae1231e'
     'tools\nca.py'        = 'dff2b794c2f773b06eb8fd391ad01e933c23de692a752333e48e268c834392cf'
 }
 $EXPECT_VERSION = '13.0.5'      # the only game version it builds and plays (since WindowSmash's commit ec8a8b5)
@@ -205,11 +209,12 @@ render_scale = 1
 ;   The game's log (build\play.log) lists the cards it found at its start.
 gpu = auto
 
-; renderer = d3d11 | vulkan
-;   d3d11:  Direct3D 11, the renderer the game is played and tested with.
-;   vulkan: the Vulkan renderer, in development. Until it can draw the game, the game checks Vulkan
-;           on this PC at its start, says what it found in its log, and draws as before.
-renderer = d3d11
+; renderer = auto | direct3d11 | vulkan
+;   auto:       Vulkan on an AMD graphics card, Direct3D 11 on any other (and whenever Vulkan cannot
+;               start, or stopped the game in its first seconds twice in a row).
+;   direct3d11: Direct3D 11 on any card.
+;   vulkan:     Vulkan on any card (Direct3D 11 if it cannot start; the log says why).
+renderer = auto
 '@
 
 $Script:Repo = $null; $Script:VenvPy = $null; $Script:SysPy = $null; $Script:Deps = $null
@@ -1412,8 +1417,8 @@ function Finish {
         Say '  bouton Play pour jouer. Pendant le jeu, Échap ouvre le menu des réglages.'
         Say '  En ligne : le lobby public ; dans le jeu, Local Wireless liste les rooms de tous les joueurs de la même'
         Say '  version (aucun port à ouvrir), et Online > Smash > Quickplay cherche des adversaires (en test).'
-        Say '  Rollback : activé par défaut en ligne (Quickplay et rooms Local Wireless à 2, quand l''autre joueur l''a aussi) ;'
-        Say '  sans rollback : Échap > Online > Rollback netcode off.'
+        Say '  En ligne, le netcode du jeu par défaut ; Échap > Online > Input delay règle son délai (Auto ou 0-25 images).'
+        Say '  Rollback (en test) : Échap > Online > Rollback netcode on, chez les deux joueurs (matchs à 2).'
         Say '  Rooms entre amis seulement : dans la fenêtre du jeu, "Private lobby" et le même code chez tout le monde.'
         Say '  FPS : si les shaders n''ont pas été précompilés, relance OpenSmash Ultimate Launcher et choisis 5).'
         Say '  Clavier : flèches = stick, Z/X/C/V = A/B/X/Y, A/S = L/R, Q/W = ZL/ZR, Entrée = +, F1 = infos.'
@@ -1426,8 +1431,8 @@ function Finish {
         Say '  Play button to play. While playing, Esc opens the settings menu.'
         Say '  Online: the public lobby; in the game, Local Wireless lists the rooms of every player of the same'
         Say '  version (no port to open), and Online > Smash > Quickplay looks for opponents (being tested).'
-        Say '  Rollback: on by default online (Quickplay and 1-on-1 Local Wireless rooms, when the other player has it too);'
-        Say '  without it: Esc > Online > Rollback netcode off.'
+        Say '  Online, the game''s own netcode by default; Esc > Online > Input delay sets its delay (Auto or 0-25 frames).'
+        Say '  Rollback (being tested): Esc > Online > Rollback netcode on, for both players (1-on-1 matches).'
         Say '  Rooms for friends only: in the game window, "Private lobby" and the same code for everyone.'
         Say '  FPS: if the shaders were not precompiled, start OpenSmash Ultimate Launcher again and choose 5).'
         Say '  Keyboard: arrows = stick, Z/X/C/V = A/B/X/Y, A/S = L/R, Q/W = ZL/ZR, Enter = +, F1 = info.'
@@ -1590,9 +1595,8 @@ function Ensure-OnlineName {
 # Play SSBU.bat does. The kit starts that window itself, not Play SSBU.bat: since the merge, Play SSBU.bat starts
 # OpenSmash.exe instead when the folder has one (upstream's own launcher, which updates the game past the group's
 # version). Whether the game was started is told by its log: every way of starting it writes build\play.log anew.
-# Rollback: since 6c38207 the game started online (--online, as the window starts it) plays Quickplay and 1-on-1 Local
-# Wireless room matches with rollback when both games have it (runtime/hle_rb_core.c, net_relay.c net_rollback_default),
-# unless online_rollback.txt says off (Esc > Online > Rollback netcode). Every SSBU_RB* variable goes, so that this
+# Rollback: from 6c38207 to 078e055 the game started online played 1-on-1 matches with rollback by default; since 40d3ca0
+# (#201, kit 4.5) it is opt-in: online_rollback.txt "on" (Esc > Online > Rollback netcode), both games. Every SSBU_RB* variable goes, so that this
 # default and that setting count (kits 4.0-4.2's option 3 set SSBU_RB=1, SSBU_RB_NET=relay, SSBU_RB_NET_LIVE=1), and the
 # netplay variables Play SSBU.bat clears go too.
 function Test-VisibleWindow([int]$id) {
@@ -1624,7 +1628,7 @@ function Start-Game {
     Ensure-OnlineName
     $hadSave = Test-Path -LiteralPath (Join-Path $Script:Repo "$SAVE_DIR\save_data\system_data.bin")
     Unlock-Fighters $true
-    foreach ($v in @('SSBU_DATA_ROOT', 'SSBU_INPUT', 'SSBU_NET_HOST', 'SSBU_NET_RELAY', 'SSBU_NET_BIND', 'SSBU_NET_ROOM', 'SSBU_NET_NAME', 'SSBU_NET_DIRECT', 'SSBU_NET_PORT')) {
+    foreach ($v in @('SSBU_DATA_ROOT', 'SSBU_INPUT', 'SSBU_NET_HOST', 'SSBU_NET_RELAY', 'SSBU_NET_BIND', 'SSBU_NET_ROOM', 'SSBU_NET_NAME', 'SSBU_NET_DIRECT', 'SSBU_NET_PORT', 'SSBU_NET_BACKEND')) {
         Remove-Item -LiteralPath "Env:$v" -ErrorAction SilentlyContinue
     }
     foreach ($v in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'SSBU_RB*' } | ForEach-Object { $_.Name })) { Remove-Item -LiteralPath "Env:$v" }
