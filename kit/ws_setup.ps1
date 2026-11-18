@@ -94,6 +94,18 @@ if ($Game) {
     } elseif (-not (Test-Path -LiteralPath $sourceVersion) -or ([IO.File]::ReadAllText($sourceVersion) -notmatch '[0-9a-fA-F]{40}')) {
         [IO.File]::WriteAllText($sourceVersion, "$OldPin`n")   # a kit 4 copy without git: built at the kit's pin
     }
+    # Kit 4 put LLVM in dump\_setup\llvm-<version>, where upstream does not look (tools\cc.py: deps\llvm, with the
+    # Visual Studio C runtime kit 4 installed): without it the update's rebuild stops at "the game compiler is not ready".
+    $llvm = Join-Path $Game 'deps\llvm'
+    if (-not (Test-Path -LiteralPath $llvm)) {
+        $kitLlvm = Get-ChildItem -LiteralPath (Join-Path $Game 'dump\_setup') -Directory -Filter 'llvm-*' -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'bin\clang-cl.exe') } | Sort-Object Name -Descending | Select-Object -First 1
+        if ($kitLlvm) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $Game 'deps') | Out-Null
+            Move-Item -LiteralPath $kitLlvm.FullName -Destination $llvm   # (a junction moves as the link itself)
+            Write-Host (L "  compiler: dump\_setup\$($kitLlvm.Name) moved to deps\llvm" "  compilateur : dump\_setup\$($kitLlvm.Name) déplacé dans deps\llvm")
+        }
+    }
     $installer = Join-Path $Game 'tools\install_windowsmash.ps1'
     if (-not (Select-String -LiteralPath $installer -Pattern 'function Get-UpdateRef' -SimpleMatch -Quiet)) {
         $new = "$installer.new"
