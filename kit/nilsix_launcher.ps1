@@ -1,12 +1,18 @@
-﻿# Nilsix tools in OpenSmash.exe (kit 5.4), dot-sourced by ws_setup.ps1: the release's launcher with one more page,
-# NILSIX TOOLS (kit\nilsix\LauncherForm.Nilsix.cs, with kit\mods_sync.py inside it). Built from the game folder's own
-# sources once they are the release's (tools\source_version.txt names the release's commit), with the release's
-# version number, so OpenSmash sees itself up to date. ssbu.exe is not touched: nothing changes online, friends who
-# play with the release's OpenSmash.exe stay in sync. Needs a .NET SDK 8 or newer; without one, while the folder waits
-# for its update, or when the build fails, the kit puts the release's OpenSmash.exe as before.
-# Built in %LOCALAPPDATA%\WindowSmash-setup\nilsix-launcher; nilsix-launcher\record.json says what OpenSmash.exe is, so a
-# start with nothing new builds nothing. An update of OpenSmash puts the release's OpenSmash.exe back (or rebuilds its
-# own): the next start of the kit builds this one again. This file must stay UTF-8 with a BOM and CRLF.
+﻿# Nilsix tools in OpenSmash.exe (kit 5.4, 5.5): the release's launcher with one more page, NILSIX TOOLS
+# (kit\nilsix\LauncherForm.Nilsix.cs, with kit\mods_sync.py inside it), built here from the release's own sources (the
+# source archive of its commit, as GitHub serves it) with the release's version number, so OpenSmash sees itself up to
+# date. ssbu.exe is not touched: nothing changes online, friends who play with the release's OpenSmash.exe stay in sync.
+# Needs a .NET SDK 8 or newer; without one, or when the build fails, the release's OpenSmash.exe as before.
+# Two callers:
+# - ws_setup.ps1 (the kit's .bat) dot-sources this file: Install-NilsixLauncher for the latest release, then
+#   Set-NilsixShortcuts (the kit's shortcuts open OpenSmash.exe from then on);
+# - OpenSmash.exe itself (LauncherForm.Nilsix.cs) runs it as a script, from a folder with the newest kit files of GitHub:
+#   at each start (a kit update: the same release, built again) and in place of its own self-update (a new release: built
+#   for it, then the game's update goes on). So once built, the launcher keeps itself and this page up to date, and the
+#   kit's .bat is only needed to install. When a new release's build fails, OpenSmash puts the release's launcher (no
+#   page) and the shortcuts open the .bat again, which tries the build at each start (Restore-NilsixShortcuts).
+# nilsix-launcher\record.json says what OpenSmash.exe is: a start with nothing new builds nothing.
+# This file must stay UTF-8 with a BOM and CRLF.
 
 function Get-NilsixDotnet {
     # dotnet when it has an SDK 8 or newer (the project is net8.0-windows), else $null
@@ -29,50 +35,69 @@ function Add-NilsixHook([string]$File, [string]$Anchor, [string]$With, [int]$Cou
     [IO.File]::WriteAllText($File, $text.Replace($Anchor, $With), (New-Object Text.UTF8Encoding $bom))
 }
 
-function Install-NilsixLauncher([string]$Game, [string]$Base, [string]$State, [string]$KitDir) {
-    # $true when $Game\OpenSmash.exe is this release's launcher with the NILSIX TOOLS page
+function Install-NilsixLauncher([string]$Game, [string]$Base, [string]$State, [string]$KitDir, [string]$Version = '', [string]$Commit = '') {
+    # $true when $Game\OpenSmash.exe is the launcher of release $Version ($Commit; without them, the release $Base
+    # describes) with the NILSIX TOOLS page; $Script:NilsixBuilt says whether it was built just now
+    $Script:NilsixBuilt = $false
     $exe = Join-Path $Game 'OpenSmash.exe'
-    if (-not (Test-Path -LiteralPath (Join-Path $Game 'OpenSmash.Launcher\OpenSmash.Launcher.csproj'))) { return $false }
+    if (-not (Test-Path -LiteralPath (Join-Path $Game 'tools'))) { return $false }
+    # (an OpenSmash.exe a build here replaced while it ran: deleted once it no longer runs)
+    Get-ChildItem -LiteralPath $Game -Filter 'OpenSmash.exe.nilsix-*.old' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
     $dotnet = Get-NilsixDotnet
     if (-not $dotnet) { return $false }   # (most players: the release's OpenSmash.exe)
     $work = Join-Path $State 'nilsix-launcher'
     New-Item -ItemType Directory -Force -Path $work | Out-Null
-    try {
-        Get-Text "$Base/opensmash-release.json" (Join-Path $work 'release.json')
-        $release = [IO.File]::ReadAllText((Join-Path $work 'release.json')) | ConvertFrom-Json
-    } catch { return $false }
-    $version = [string]$release.version; $commit = ([string]$release.commit).ToLower()
-    if ($version -notmatch '^\d+\.\d+\.\d+' -or $commit -notmatch '^[0-9a-f]{40}$') { return $false }
-    $installed = ''
-    try { $installed = (([IO.File]::ReadAllText((Join-Path $Game 'tools\source_version.txt'))).Trim() -split '\s+')[0].ToLower() } catch { }
-    if ($installed -ne $commit) {
-        Write-Host (L "  Nilsix tools: after OpenSmash's update to $version (accept it), at the next start" `
-                      "  Nilsix tools : après la mise à jour d'OpenSmash en $version (accepte-la), au prochain lancement")
-        return $false
+    if (-not $Version) {
+        try {
+            Get-Text "$Base/opensmash-release.json" (Join-Path $work 'release.json')
+            $release = [IO.File]::ReadAllText((Join-Path $work 'release.json')) | ConvertFrom-Json
+            $Version = [string]$release.version; $Commit = [string]$release.commit
+        } catch { return $false }
     }
+    $Commit = $Commit.ToLower()
+    if ($Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$' -or $Commit -notmatch '^[0-9a-f]{40}$') { return $false }
     $kit = (@('nilsix\LauncherForm.Nilsix.cs', 'mods_sync.py', 'nilsix_launcher.ps1') | ForEach-Object { Get-Sha256 (Join-Path $KitDir $_) }) -join ' '
     $recordFile = Join-Path $work 'record.json'
-    $record = $null
-    try { $record = [IO.File]::ReadAllText($recordFile) | ConvertFrom-Json } catch { }
-    if ($record -and $record.commit -eq $commit -and $record.version -eq $version -and $record.kit -eq $kit -and
-        (Test-Path -LiteralPath $exe) -and (Get-Sha256 $exe) -eq $record.sha) {
-        Write-Host (L "  Nilsix tools: in OpenSmash.exe $version" "  Nilsix tools : dans OpenSmash.exe $version")
+    $isBuilt = {
+        $record = $null
+        try { $record = [IO.File]::ReadAllText($recordFile) | ConvertFrom-Json } catch { }
+        [bool]($record -and $record.commit -eq $Commit -and $record.version -eq $Version -and $record.kit -eq $kit -and
+               (Test-Path -LiteralPath $exe) -and (Get-Sha256 $exe) -eq $record.sha)
+    }
+    if (& $isBuilt) {
+        Write-Host (L "  Nilsix tools: in OpenSmash.exe $Version" "  Nilsix tools : dans OpenSmash.exe $Version")
         return $true
     }
 
-    Write-Host (L "Building OpenSmash.exe $version with the NILSIX TOOLS page (one to a few minutes)..." `
-                  "Compilation d'OpenSmash.exe $version avec la page NILSIX TOOLS (une à quelques minutes)...")
+    # one build at a time (OpenSmash's start and the kit's .bat can both get here)
+    $lock = $null; $moved = $null
+    for ($i = 0; -not $lock -and $i -lt 120; $i++) {
+        try { $lock = [IO.File]::Open((Join-Path $work 'build.lock'), 'OpenOrCreate', 'ReadWrite', 'None') } catch { Start-Sleep -Seconds 5 }
+    }
+    if (-not $lock) { return $false }
     try {
+        if (& $isBuilt) { return $true }   # (the other one has just built it)
+        Write-Host (L "Building OpenSmash.exe $Version with the NILSIX TOOLS page (one to a few minutes)..." `
+                      "Compilation d'OpenSmash.exe $Version avec la page NILSIX TOOLS (une à quelques minutes)...")
+        # the release's sources: the folders the launcher is built from, out of its commit's source archive
         $src = Join-Path $work 'src'
         if (Test-Path -LiteralPath $src) { Remove-Item -LiteralPath $src -Recurse -Force }
-        foreach ($d in 'OpenSmash.Launcher', 'OpenSmash.Core') {
-            $null = & robocopy.exe (Join-Path $Game $d) (Join-Path $src $d) /E /XD bin obj /R:1 /W:1 /NFL /NDL /NJH /NJS /NP
-            if ($LASTEXITCODE -ge 8) { throw "the copy of $d failed (robocopy $LASTEXITCODE)" }
-        }
-        Copy-Item -LiteralPath (Join-Path $Game 'locales') -Destination (Join-Path $src 'locales') -Recurse
-        New-Item -ItemType Directory -Force -Path (Join-Path $src 'media') | Out-Null
-        Copy-Item -LiteralPath (Join-Path $Game 'media\opensmash.ico') -Destination (Join-Path $src 'media')
+        $zip = Join-Path $work 'source.zip'
+        Get-Text "https://codeload.github.com/OpenSmash-Ultimate/OpenSmash-Ultimate/zip/$Commit" $zip
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $z = [IO.Compression.ZipFile]::OpenRead($zip)
+        try {
+            foreach ($e in $z.Entries) {
+                $rel = $e.FullName.Substring($e.FullName.IndexOf('/') + 1)   # (under the archive's one top folder)
+                if (-not $e.Name -or $rel -notmatch '^(OpenSmash\.Launcher|OpenSmash\.Core|locales|media)/') { continue }
+                if ($rel -match '(^|/)\.\.(/|$)|:|\\') { throw "unsafe path in the source archive: $($e.FullName)" }
+                $dst = Join-Path $src ($rel.Replace('/', '\'))
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $dst, $true)
+            }
+        } finally { $z.Dispose() }
         $ui = Join-Path $src 'OpenSmash.Launcher'
+        if (-not (Test-Path -LiteralPath (Join-Path $ui 'OpenSmash.Launcher.csproj'))) { throw "the source archive of $Commit has no OpenSmash.Launcher" }
         Add-NilsixHook (Join-Path $ui 'LauncherForm.Paint.cs') 'case "yuzu": PaintYuzuRoom(g, W, H); break;' `
             'case "nilsix": PaintNilsix(g, W, H); break;   case "yuzu": PaintYuzuRoom(g, W, H); break;' 1
         Add-NilsixHook (Join-Path $ui 'LauncherForm.Paint.cs') 'new[] { ("nav:settings", "SETTINGS"),' `
@@ -81,6 +106,9 @@ function Install-NilsixLauncher([string]$Game, [string]$Base, [string]$State, [s
             '_view == "competitive" ? "nav:competitive" : _view == "nilsix" ? "nav:nilsix" : "nav:mods";' 1
         Add-NilsixHook (Join-Path $ui 'LauncherForm.cs') 'if (ActivateCompetitiveHit(id)) return;' `
             'if (ActivateCompetitiveHit(id)) return;   if (ActivateNilsixHit(id)) return;' 1
+        # (OpenSmash's self-update builds the next release's launcher with this page: LauncherForm.Nilsix.cs)
+        Add-NilsixHook (Join-Path $ui 'LauncherForm.Release.cs') 'await Updater.ReplaceLauncherAsync(_release, default, null, atRoot);' `
+            'await NilsixReplaceLauncherAsync(_release, atRoot);' 1
         Add-NilsixHook (Join-Path $ui 'OpenSmash.Launcher.csproj') '<EmbeddedResource Include="Assets\emblem-white.png" LogicalName="emblem.png" />' `
             '<EmbeddedResource Include="Assets\emblem-white.png" LogicalName="emblem.png" /><EmbeddedResource Include="Nilsix\mods_sync.py" LogicalName="Nilsix.mods_sync.py" />' 1
         Copy-Item -LiteralPath (Join-Path $KitDir 'nilsix\LauncherForm.Nilsix.cs') -Destination $ui
@@ -94,28 +122,109 @@ function Install-NilsixLauncher([string]$Game, [string]$Base, [string]$State, [s
         # (as the release workflow builds it, .github/workflows/release.yml "Build OpenSmash.exe"; no compiler server left
         # running beside the game)
         $p = Start-Process -FilePath $dotnet -NoNewWindow -Wait -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err" -ArgumentList @(
-            'publish', "`"$(Join-Path $ui 'OpenSmash.Launcher.csproj')`"", '-c', 'Release', '-o', "`"$out`"", "-p:Version=$version", '--nologo', '--disable-build-servers')
+            'publish', "`"$(Join-Path $ui 'OpenSmash.Launcher.csproj')`"", '-c', 'Release', '-o', "`"$out`"", "-p:Version=$Version", '--nologo', '--disable-build-servers')
         $built = Join-Path $out 'OpenSmash.exe'
         if ($p.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $built)) {
             $why = @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue | Where-Object { $_ -match ' error ' } | Select-Object -First 2) -join ' '
             throw "dotnet publish stopped (code $($p.ExitCode)) $why (log: $log)"
         }
         $sha = Get-Sha256 $built
-        if (Test-Path -LiteralPath $exe) {   # (an OpenSmash.exe that runs can be renamed, not replaced; OpenSmash deletes the .old)
-            Remove-Item -LiteralPath "$exe.old" -Force -ErrorAction SilentlyContinue
-            Rename-Item -LiteralPath $exe -NewName 'OpenSmash.exe.old'
+        $builtVersion = (Get-Item -LiteralPath $built).VersionInfo.ProductVersion
+        if ($builtVersion -ne $Version) { throw "the build says $builtVersion, not $Version" }   # (else OpenSmash would update itself again and again)
+        if (Test-Path -LiteralPath $exe) {
+            # an OpenSmash.exe that runs can be renamed, not replaced or deleted: this name until a run here deletes it
+            # (OpenSmash.exe.old is left to OpenSmash's own self-update, which fails when a running exe has that name)
+            $moved = Join-Path $Game ('OpenSmash.exe.nilsix-{0:yyyyMMddHHmmss}.old' -f (Get-Date))
+            Rename-Item -LiteralPath $exe -NewName (Split-Path -Leaf $moved)
         }
         Copy-Item -LiteralPath $built -Destination $exe
-        $record = @{ commit = $commit; version = $version; kit = $kit; sha = $sha }
+        if ($moved) { Remove-Item -LiteralPath $moved -Force -ErrorAction SilentlyContinue }   # (at once when it does not run)
+        $record = @{ commit = $Commit; version = $Version; kit = $kit; sha = $sha }
         [IO.File]::WriteAllText($recordFile, ($record | ConvertTo-Json))
-        Remove-Item -LiteralPath $src, $out -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host (L "  Nilsix tools: OpenSmash.exe $version built, with its NILSIX TOOLS page" `
-                      "  Nilsix tools : OpenSmash.exe $version compilé, avec sa page NILSIX TOOLS")
+        Remove-Item -LiteralPath $src, $out, $zip -Recurse -Force -ErrorAction SilentlyContinue
+        $Script:NilsixBuilt = $true
+        Write-Host (L "  Nilsix tools: OpenSmash.exe $Version built, with its NILSIX TOOLS page" `
+                      "  Nilsix tools : OpenSmash.exe $Version compilé, avec sa page NILSIX TOOLS")
         return $true
     } catch {
         Write-Host (L "  Nilsix tools: not built ($($_.Exception.Message)); the release's OpenSmash.exe instead" `
                       "  Nilsix tools : pas compilé ($($_.Exception.Message)) ; l'OpenSmash.exe de la version publiée à la place") -ForegroundColor Yellow
-        if (-not (Test-Path -LiteralPath $exe) -and (Test-Path -LiteralPath "$exe.old")) { Rename-Item -LiteralPath "$exe.old" -NewName 'OpenSmash.exe' }
+        if (-not (Test-Path -LiteralPath $exe) -and $moved -and (Test-Path -LiteralPath $moved)) { Rename-Item -LiteralPath $moved -NewName 'OpenSmash.exe' }
         return $false
+    } finally { $lock.Dispose() }
+}
+
+function Set-NilsixShortcuts([string]$Game, [string]$State, [string[]]$Dirs = @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'))) {
+    # once OpenSmash.exe keeps itself up to date with this page, the kit's .bat is only needed to install: this user's
+    # shortcuts to it (the desktop's, the Start menu's) open OpenSmash.exe directly. What they were is kept in
+    # nilsix-launcher\shortcuts.txt (path, target, arguments, folder, icon; tab-separated) for Restore-NilsixShortcuts.
+    $exe = Join-Path $Game 'OpenSmash.exe'
+    $saved = Join-Path $State 'nilsix-launcher\shortcuts.txt'
+    $lines = @()
+    try { $lines = @([IO.File]::ReadAllLines($saved)) } catch { }
+    $shell = New-Object -ComObject WScript.Shell
+    foreach ($dir in $Dirs) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.lnk' -ErrorAction SilentlyContinue)) {
+            try {
+                $l = $shell.CreateShortcut($f.FullName)
+                if ([IO.Path]::GetFileName($l.TargetPath) -notin 'OpenSmash Ultimate Launcher.bat', 'OpenSmash Launcher.bat', 'WindowSmash Launcher.bat') { continue }
+                $lines = @($lines | Where-Object { ($_ -split "`t")[0] -ne $f.FullName }) + (@($f.FullName, $l.TargetPath, $l.Arguments, $l.WorkingDirectory, $l.IconLocation) -join "`t")
+                [IO.File]::WriteAllLines($saved, [string[]]$lines)   # (before the shortcut changes)
+                $icon = ($l.IconLocation -split ',')[0]
+                $l.TargetPath = $exe; $l.Arguments = ''; $l.WorkingDirectory = $Game
+                if (-not $icon -or -not (Test-Path -LiteralPath $icon)) { $l.IconLocation = "$exe,0" }
+                $l.Save()
+                Write-Host (L "  shortcut '$($f.BaseName)': opens OpenSmash.exe from now on" "  raccourci « $($f.BaseName) » : ouvre OpenSmash.exe désormais")
+            } catch { }
+        }
     }
+}
+
+function Restore-NilsixShortcuts([string]$State) {
+    # OpenSmash.exe is the release's again (a build failed): Set-NilsixShortcuts's shortcuts open the kit's .bat again,
+    # which tries the build at each start until it works, then sets them again
+    $saved = Join-Path $State 'nilsix-launcher\shortcuts.txt'
+    if (-not (Test-Path -LiteralPath $saved)) { return }
+    $shell = New-Object -ComObject WScript.Shell
+    foreach ($line in [IO.File]::ReadAllLines($saved)) {
+        $v = $line -split "`t"
+        if ($v.Count -ne 5 -or -not (Test-Path -LiteralPath $v[0]) -or -not (Test-Path -LiteralPath $v[1])) { continue }
+        try {
+            $l = $shell.CreateShortcut($v[0])
+            if ([IO.Path]::GetFileName($l.TargetPath) -ne 'OpenSmash.exe') { continue }   # (changed since: left as it is)
+            $l.TargetPath = $v[1]; $l.Arguments = $v[2]; $l.WorkingDirectory = $v[3]; $l.IconLocation = $v[4]
+            $l.Save()
+        } catch { }
+    }
+    Remove-Item -LiteralPath $saved -Force
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
+    # OpenSmash.exe's call (LauncherForm.Nilsix.cs NilsixKit): nilsix_launcher.ps1 <game folder> [<version> <commit>], in
+    # a folder with the newest kit files; without a version, the release OpenSmash.exe was built for (record.json).
+    # Exit code: 0 = OpenSmash.exe is already that one, 10 = built and put in place, 1 = not built.
+    $ErrorActionPreference = 'Stop'
+    try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
+    $State = Join-Path $env:LOCALAPPDATA 'WindowSmash-setup'
+    $Fr = $false
+    try { $Fr = ([IO.File]::ReadAllText((Join-Path $State 'lang.txt'))).Trim() -eq 'fr' } catch { }
+    function L([string]$En, [string]$FrText) { if ($Fr) { $FrText } else { $En } }
+    function Get-Text([string]$Url, [string]$OutFile) {
+        Invoke-WebRequest -UseBasicParsing -Headers @{ 'User-Agent' = 'OpenSmash-Ultimate-Launcher' } -Uri $Url -OutFile $OutFile
+    }
+    function Get-Sha256([string]$File) { (Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLower() }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $ProgressPreference = 'SilentlyContinue'
+    $code = 1
+    try {
+        $v = [string]$args[1]; $c = [string]$args[2]
+        if (-not $v) {
+            $r = [IO.File]::ReadAllText((Join-Path $State 'nilsix-launcher\record.json')) | ConvertFrom-Json
+            $v = [string]$r.version; $c = [string]$r.commit
+        }
+        if (Install-NilsixLauncher ([string]$args[0]) '' $State $PSScriptRoot $v $c) { $code = if ($Script:NilsixBuilt) { 10 } else { 0 } }
+    } catch { Write-Host $_.Exception.Message }
+    # (a new release not built: OpenSmash puts the release's launcher instead, without this page)
+    if ($code -eq 1 -and $args[1]) { try { Restore-NilsixShortcuts $State } catch { Write-Host $_.Exception.Message } }
+    exit $code
 }

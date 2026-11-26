@@ -51,8 +51,20 @@ Ses mods que tu n'as pas sont désactivés, jamais supprimés. Un de ses dossier
 contient d'autres fichiers est renommé « (ancien) » et désactivé. Un mod qui ne vient pas de GameBanana ne peut pas
 être téléchargé : le fichier le signale.
 
-Quand OpenSmash se met à jour lui-même, il remet son OpenSmash.exe normal : l'onglet revient au lancement suivant par
-ce launcher, qui le recompile (de 30 secondes à quelques minutes).
+### Les mises à jour
+
+Avec NILSIX TOOLS, ce launcher ne sert qu'à installer : ensuite, ses raccourcis (Bureau, menu Démarrer) ouvrent
+directement OpenSmash.exe, qui se met à jour tout seul.
+
+- Une nouvelle version d'OpenSmash : OpenSmash la propose comme d'habitude. Si tu acceptes, son nouveau launcher est
+  compilé chez toi avec l'onglet NILSIX TOOLS (de 30 secondes à quelques minutes), puis OpenSmash redémarre et met le
+  jeu à jour.
+- Une nouvelle version de NILSIX TOOLS : OpenSmash la cherche à chaque démarrage, en arrière-plan, et la compile. Elle
+  sert à partir du démarrage suivant. L'état s'affiche à droite du journal, dans l'onglet.
+- Si la compilation échoue (par exemple quand OpenSmash a changé une partie du code dont l'onglet a besoin), OpenSmash
+  prend son launcher normal, sans l'onglet, et les raccourcis rouvrent ce launcher. Il retente la compilation à chaque
+  lancement, jusqu'à ce que le kit soit corrigé. Le détail est dans
+  `%LOCALAPPDATA%\WindowSmash-setup\nilsix-launcher\update.log`.
 
 ## Pour les développeurs
 
@@ -61,11 +73,17 @@ ce launcher, qui le recompile (de 30 secondes à quelques minutes).
   mettent à jour depuis le fichier de leur nom (garder les trois identiques).
 - `kit/ws_setup.ps1` : le kit 5, qui passe la main à OpenSmash.exe (PowerShell 5.1, UTF-8 avec BOM et CRLF).
 - `kit-opensmash/os_setup.ps1` : renvoie vers `kit/ws_setup.ps1` (pour les anciennes amorces OpenSmash).
-- `kit/nilsix_launcher.ps1` : compile OpenSmash.exe avec la page NILSIX TOOLS, seulement quand les sources du dossier de
-  jeu sont celles de la version publiée (`tools/source_version.txt`). Il ajoute 5 points d'accroche dans
-  `OpenSmash.Launcher` ; si l'un d'eux a changé en amont, rien n'est compilé et l'OpenSmash.exe publié est mis à la
-  place. `%LOCALAPPDATA%\WindowSmash-setup\nilsix-launcher\record.json` évite de recompiler à chaque lancement.
-- `kit/nilsix/LauncherForm.Nilsix.cs` : la page NILSIX TOOLS, dessinée avec les mêmes fonctions que les autres pages.
+- `kit/nilsix_launcher.ps1` : compile OpenSmash.exe avec la page NILSIX TOOLS, à partir de l'archive des sources du
+  commit de la version publiée (téléchargée sur GitHub). Il ajoute 6 points d'accroche dans `OpenSmash.Launcher` ; si
+  l'un d'eux a changé en amont, rien n'est compilé et l'OpenSmash.exe publié est mis à la place.
+  `%LOCALAPPDATA%\WindowSmash-setup\nilsix-launcher\record.json` évite de recompiler quand rien n'a changé.
+  OpenSmash.exe le lance aussi comme script, avec les fichiers du kit téléchargés sur GitHub : à chaque démarrage, et à
+  la place de sa propre mise à jour (`nilsix_launcher.ps1 <dossier> [<version> <commit>]` ; code de sortie 0 = déjà
+  compilé, 10 = compilé à l'instant, 1 = pas compilé). `Set-NilsixShortcuts` fait ouvrir OpenSmash.exe aux raccourcis
+  du .bat, `Restore-NilsixShortcuts` les remet comme avant (`nilsix-launcher\shortcuts.txt`).
+- `kit/nilsix/LauncherForm.Nilsix.cs` : la page NILSIX TOOLS, dessinée avec les mêmes fonctions que les autres pages,
+  et ses mises à jour (la vérification au démarrage, `NilsixReplaceLauncherAsync`). `NILSIX_KIT_URL` (par exemple
+  `file:///D:/WindowSmashLauncher/kit/`) remplace GitHub pour les tests.
 - `kit/mods_sync.py` : `make` écrit le fichier .bat, qui contient ce script et la liste des mods. Chez l'ami, `sync`
   fait la synchro puis la vérifie (`check` vérifie seulement). Le code est calculé sur la liste de mods que le jeu
   échange en ligne (`runtime/net_relay.c`) ; la vérification compare aussi l'ordre des mods et les plugins.

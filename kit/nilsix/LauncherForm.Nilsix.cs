@@ -6,6 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
+using OpenSmash.Core;
 
 namespace OpenSmash.Launcher
 {
@@ -16,15 +18,106 @@ namespace OpenSmash.Launcher
     // "Synchro mods - <name>.bat" (English: "Mods sync - <name>.bat") on the desktop; a friend double-clicks it and their
     // mods become these: the same folders, switches, order and versions, then checked against the set the game reports
     // online.
+    // Updates: this launcher keeps itself and this page up to date (the kit's .bat is only needed to install). At each
+    // start, kit\nilsix_launcher.ps1 with the newest kit files of GitHub, in the background: when they changed, this
+    // release's launcher is built again with them (used from the next start). And OpenSmash's self-update builds the new
+    // release's launcher with this page instead of downloading the release's (NilsixReplaceLauncherAsync); the release's
+    // own when that fails, as before.
     public partial class LauncherForm
     {
         Process? _nilsixProc;
         readonly List<string> _nilsixLog = new();
         string? _nilsixFile, _nilsixPrint;
-        bool _nilsixFailed;
+        bool _nilsixFailed, _nilsixWatch;
 
         static bool NilsixFr => UiLocale.Language.StartsWith("fr", StringComparison.OrdinalIgnoreCase);
         static string NT(string en, string fr) => NilsixFr ? fr : en;
+
+        // (NILSIX_KIT_URL: another place for the kit files, for tests: file:///D:/WindowSmashLauncher/kit/)
+        static string NilsixKitUrl => Environment.GetEnvironmentVariable("NILSIX_KIT_URL") is { Length: > 0 } u ? u
+            : "https://raw.githubusercontent.com/Nilsix/WindowSmashLauncher/main/kit/";
+        static readonly string[] NilsixKitFiles = { "nilsix_launcher.ps1", "nilsix/LauncherForm.Nilsix.cs", "mods_sync.py" };
+        static string NilsixWork => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WindowSmash-setup", "nilsix-launcher");
+        static Task<int>? s_nilsixKit;   // (the start's check; an update waits for it: one build at a time)
+        readonly bool _nilsixBoot = NilsixBoot();
+
+        static bool NilsixBoot()
+        {
+            // (not with OPENSMASH_UPDATE=off, nor in a git checkout: no update there; record.json: the kit built this exe)
+            string repo = Path.GetDirectoryName(Updater.ExePath) ?? "";
+            if (Updater.Off || s_nilsixKit != null || Directory.Exists(Path.Combine(repo, ".git"))
+                || !File.Exists(Path.Combine(NilsixWork, "record.json"))) return false;
+            s_nilsixKit = Task.Run(() => NilsixKit(repo, null));
+            return true;
+        }
+
+        // kit\nilsix_launcher.ps1 with the newest kit files, for release r (null: the one this exe was built for). 0 =
+        // OpenSmash.exe is already that one, 10 = built and put in place, 1 = not built (GitHub out of reach too).
+        static async Task<int> NilsixKit(string repo, Release? r)
+        {
+            var text = new StringBuilder(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss ") + (r == null ? "start" : "update to " + r.Version) + Environment.NewLine);
+            int code = 1;
+            try
+            {
+                var files = new List<(string Name, byte[] Bytes)>();   // (all three first: never a build from two kits)
+                foreach (string f in NilsixKitFiles) files.Add((f, await Releases.GetAsync(NilsixKitUrl + f)));
+                string dir = Path.Combine(NilsixWork, "kit");
+                foreach (var (name, bytes) in files)
+                {
+                    string dst = Path.Combine(dir, name.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+                    File.WriteAllBytes(dst, bytes);
+                }
+                var psi = new ProcessStartInfo("powershell.exe")
+                {
+                    UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = dir,
+                    RedirectStandardOutput = true, RedirectStandardError = true,
+                    StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+                };
+                foreach (string a in new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", Path.Combine(dir, "nilsix_launcher.ps1"), repo })
+                    psi.ArgumentList.Add(a);
+                if (r != null) { psi.ArgumentList.Add(r.Version.ToString()); psi.ArgumentList.Add(r.Commit); }
+                using var p = Process.Start(psi) ?? throw new InvalidOperationException("PowerShell did not start");
+                try { p.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { }   // (dotnet too: beside the game)
+                var err = p.StandardError.ReadToEndAsync();
+                text.Append(await p.StandardOutput.ReadToEndAsync()).Append(await err);
+                await p.WaitForExitAsync();
+                code = p.ExitCode;
+            }
+            catch (Exception e) { text.AppendLine(e.Message); }
+            text.AppendLine("code " + code);
+            try
+            {
+                string log = Path.Combine(NilsixWork, "update.log");
+                if (File.Exists(log) && new FileInfo(log).Length > 256 * 1024) File.Delete(log);
+                File.AppendAllText(log, text.ToString());
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            return code;
+        }
+
+        // SelfUpdateLauncherAsync's download, in this launcher: the new release's launcher built here with this page. The
+        // release's own when that fails, or when this exe is not the folder's: StartUpdated starts this exe again, which
+        // must then be the new release's, else it would update itself again and again (0 or 10: the script checked the
+        // built exe's version; FileVersionInfo here would read this running exe's, the path's file being the new one).
+        async Task NilsixReplaceLauncherAsync(Release r, string atRoot)
+        {
+            if (string.Equals(Path.GetFullPath(Updater.ExePath), Path.GetFullPath(atRoot), StringComparison.OrdinalIgnoreCase)
+                && File.Exists(Path.Combine(NilsixWork, "record.json")))
+            {
+                SetLoad(NT("BUILDING THE LAUNCHER WITH NILSIX TOOLS", "COMPILATION DU LAUNCHER AVEC NILSIX TOOLS"), -1);
+                if (s_nilsixKit != null) await s_nilsixKit;
+                int code = await Task.Run(() => NilsixKit(_repo, r));
+                if (code == 0 || code == 10)
+                {
+                    Updater.Log(_repo, "launcher " + r.Version + " built with NILSIX TOOLS");
+                    return;
+                }
+                Updater.Log(_repo, $"NILSIX TOOLS: launcher {r.Version} not built (code {code}): the release's instead");
+                SetLoad("UPDATING THE LAUNCHER", -1);
+            }
+            await Updater.ReplaceLauncherAsync(r, default, null, atRoot);
+        }
 
         bool ActivateNilsixHit(string id)
         {
@@ -168,6 +261,20 @@ namespace OpenSmash.Launcher
                     : done ? NT("FILE ON THE DESKTOP  ·  CODE ", "FICHIER SUR LE BUREAU  ·  CODE ") + _nilsixPrint
                     : _nilsixFailed ? NT("STOPPED", "ARRÊTÉ") : NT("LOG", "JOURNAL");
                 Theme.Label(g, head, FM(12 * s, true), A(done ? Theme.Ready : _nilsixFailed ? Theme.Bad : Theme.Dim), x, top, 20 * s, 12 * s * 0.14f);
+                if (_nilsixBoot && s_nilsixKit is { } kit)   // (the start's update check, on the right when it fits)
+                {
+                    string state = !kit.IsCompleted ? NT("NILSIX TOOLS: LOOKING FOR AN UPDATE...", "NILSIX TOOLS : RECHERCHE DE MISE À JOUR...")
+                        : kit.Result == 10 ? NT("NILSIX TOOLS UPDATED: FROM THE NEXT START", "NILSIX TOOLS MIS À JOUR : AU PROCHAIN DÉMARRAGE")
+                        : kit.Result == 0 ? NT("NILSIX TOOLS UP TO DATE", "NILSIX TOOLS À JOUR")
+                        : NT("NILSIX TOOLS: UPDATE FAILED (update.log)", "NILSIX TOOLS : ÉCHEC DE LA MISE À JOUR (update.log)");
+                    if (Theme.TextWidth(g, head, FM(12 * s, true), 12 * s * 0.14f, false) + Theme.TextWidth(g, state, FM(12 * s, true), 12 * s * 0.14f, false) + 32 * s < cw)
+                        Theme.Label(g, state, FM(12 * s, true), A(kit.IsCompleted && kit.Result is not (0 or 10) ? Theme.Bad : Theme.Dim), x, top, 20 * s, 12 * s * 0.14f, StringAlignment.Far, cw);
+                    if (!kit.IsCompleted && !_nilsixWatch)
+                    {
+                        _nilsixWatch = true;
+                        kit.ContinueWith(_ => { try { BeginInvoke(new Action(Invalidate)); } catch (InvalidOperationException) { } });
+                    }
+                }
                 HLine(g, x, x + cw, top + 28 * s);
                 string[] lines;
                 lock (_nilsixLog) lines = _nilsixLog.ToArray();

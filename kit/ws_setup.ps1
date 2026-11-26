@@ -15,10 +15,11 @@
 # Kit 5.1 (522ff00) brought kit 4.4's dual boot back (2 = ssbu-recomp, kit-opensmash\os_kit.ps1); 5.2 removes it again.
 # 5.3: since v0.5.0 the installer to check is tools\install_opensmash.ps1 (install_windowsmash.ps1 forwards to it).
 # 5.4: on a PC with a .NET SDK, OpenSmash.exe is the release's with a NILSIX TOOLS page (kit\nilsix_launcher.ps1).
+# 5.5: that OpenSmash.exe keeps itself and the page up to date, so the kit's shortcuts open it directly from then on.
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '5.4 (2026-11-26)'
+$KitVersion = '5.5 (2026-11-26)'
 $Repo = 'OpenSmash-Ultimate/OpenSmash-Ultimate'
 $OldPin = '1a819b81b35b8ec3c0f4b0c6df3dab60eaf2244a'   # kit 4.5's pin
 $State = Join-Path $env:LOCALAPPDATA 'WindowSmash-setup'
@@ -146,8 +147,13 @@ $base = "https://github.com/$Repo/releases/download/$([uri]::EscapeDataString($T
 # with the NILSIX TOOLS page when this PC can build it, else the release's own
 $nilsix = $false
 if ($Game) {
-    try { . (Join-Path $PSScriptRoot 'nilsix_launcher.ps1'); $nilsix = Install-NilsixLauncher $Game $base $State $PSScriptRoot }
+    try {
+        . (Join-Path $PSScriptRoot 'nilsix_launcher.ps1')
+        $nilsix = Install-NilsixLauncher $Game $base $State $PSScriptRoot
+    }
     catch { $nilsix = $false; Write-Host "  Nilsix tools: $($_.Exception.Message)" -ForegroundColor Yellow }   # (the release's then)
+    # (the shortcuts open the OpenSmash.exe that updates itself with the page, else this .bat again)
+    try { if ($nilsix) { Set-NilsixShortcuts $Game $State } else { Restore-NilsixShortcuts $State } } catch { }
 }
 if (-not $nilsix) {
     $shaFile = Join-Path $State 'OpenSmash.exe.sha256'
