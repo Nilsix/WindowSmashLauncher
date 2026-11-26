@@ -12,7 +12,11 @@ they are on). The .bat carries this file and a manifest: every mod of the sender
 GameBanana file, that hash), their order, the code patches' switch, the standard plugins and the set expected online.
 sync takes each mod from the friend's own folders (same files, renamed when needed) or from GameBanana (the sender's
 file: "update" means the sender's version), turns on what the sender has on and off everything else (the friend's
-own mods stay, turned off), applies as the Mods page does, then compares the set with the sender's.
+own mods stay, turned off; its older version of one of the sender's GameBanana mods is replaced), applies as the Mods
+page does, then compares the set with the sender's.
+make first updates the sender's GameBanana mods that have a newer file of their own (newer_file: not another file of
+the page, an add-on or a variant), in place: same folder names, switches and order; then the game applies them. So the
+file gives both the newest.
 Runs with the OpenSmash folder's Python and its tools (tools/mods.py).
 """
 import argparse
@@ -164,11 +168,235 @@ def free_name(base, taken):
     return name
 
 
+# ---- GameBanana updates -----------------------------------------------------------------------------------------
+VERSION = r"(?:^|_)v?(\d+(?:_\d+)*)(?=_|$)"   # (a version in a file's name: v21, v3_2, 1_2; not sl2 or arcropolisv11)
+GAME = r"(?:^|_)((?:9|1[0-3])_0_\d+)(?=_|$)"  # (13_0_4: the game's version a file is built for, part of what it is)
+
+
+def norm(name):
+    """a file's name in lower case without its extension, GameBanana's mark of a name uploaded again (_ and 5 hex
+    digits, one a digit at least: not a word such as _faded) and punctuation (one _ between words)"""
+    s = os.path.splitext(os.path.basename(str(name)).lower())[0]
+    s = re.sub(r"_(?=[a-f]{0,4}\d)[0-9a-f]{5}$", "", s)
+    return re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+
+
+def parts(name):
+    """(stem, version): what stays from one version of a file to the next, and its version (a tuple, or None).
+    moveset_cuphead_6f5db.zip, moveset_cuphead_b7db9.zip -> moveset_cuphead; paper_mario_moveset_1_2.rar -> (
+    paper_mario_moveset, (1, 2)); x_moveset_13_0_4.rar -> x_moveset_13_0_4 (another game's build, not a newer x_moveset)"""
+    s = norm(name)
+    games = re.findall(GAME, s)
+    s = re.sub(GAME, "", s)
+    version = tuple(int(x) for v in re.findall(VERSION, s) for x in v.split("_")) or None
+    return re.sub(VERSION, "", s).strip("_") + "".join("_" + g for g in games), version
+
+
+def stem(name):
+    return parts(name)[0]
+
+
+def version_of(name):
+    return parts(name)[1]
+
+
+def newer_file(files, file_id, file_name, installed):
+    """the file of a GameBanana page (its _aFiles) that replaces the installed one, else None: the newest with the
+    same stem, uploaded after it (any time when the page no longer has it), not a lower version, not installed itself
+    (installed: the page's file ids installed here). Another stem is another file of the page: an add-on (Knuckles'
+    track list), a variant (Cuphead without UI) or an older game's build (Mega Man X's moveset_x for 13.0.4)."""
+    mine = next((f for f in files if str(f.get("_idRow")) == str(file_id)), None)
+    name = mine.get("_sFile", "") if mine else file_name
+    key, ver = stem(name), version_of(name)
+    after = (mine.get("_tsDateAdded") or 0) if mine else -1
+    best = None
+    for f in files if key else ():
+        when, v = f.get("_tsDateAdded") or 0, version_of(f.get("_sFile", ""))
+        if (str(f.get("_idRow")) in installed or stem(f.get("_sFile", "")) != key or when <= after
+                or (ver and v and v < ver)):
+            continue
+        if best is None or when > (best.get("_tsDateAdded") or 0):
+            best = f
+    return best
+
+
+def files_of(folder):
+    out = set()
+    for dp, _dirs, files in os.walk(folder):
+        out.update(os.path.relpath(os.path.join(dp, n), folder).replace(os.sep, "/").lower() for n in files)
+    return out
+
+
+def pair(olds, news):
+    """{old folder: new folder}: one each, else each old one with the new one sharing most of its files (a pack's
+    parts); None when an old one has none (the author changed the pack: that one is updated by hand)"""
+    if len(olds) == 1 and len(news) == 1:
+        return {olds[0]: news[0]}
+    sets = {p: files_of(p) for p in olds + news}
+    scored = sorted(((len(sets[o] & sets[n]) / len(sets[o] | sets[n]), o, n) for o in olds for n in news
+                     if sets[o] & sets[n]), reverse=True)
+    out = {}
+    for _score, o, n in scored:
+        if o not in out and n not in out.values():
+            out[o] = n
+    return out if len(out) == len(olds) else None
+
+
+def game_running(tree):
+    """this folder's game runs (Windows keeps a running exe from being opened for writing)"""
+    try:
+        with open(os.path.join(tree.root, "build", "ssbu.exe"), "r+b"):
+            return False
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+
+
+def bar(label):
+    """a download's progress in the bar at the bottom (gamebanana_install's progress(done, total)), once a percent"""
+    last = [None]
+
+    def p(done, total):
+        x = done * 100 // total if total else -1
+        if x != last[0]:
+            last[0] = x
+            step(label, x, 100 if x >= 0 else 0)
+    return p
+
+
+def update(mods, os_mods, tree, state):
+    """make's first step: each GameBanana mod with a newer file of its own (newer_file) gets it in place - the same
+    folder names, switches and order - then the game applies them. Asks each page once. Returns the state."""
+    groups = {}   # (gamebanana, file_id): the folders installed from that file (a pack has several)
+    for n in dict.fromkeys(state["order"]):
+        m = state["mods"][n]
+        if m.get("gamebanana") and m.get("file_id"):
+            groups.setdefault((str(m["gamebanana"]), str(m["file_id"])), []).append(n)
+    if not groups:
+        return state
+    say(L("Checking GameBanana for newer files...", "Recherche de versions plus récentes sur GameBanana..."))
+    label = L("CHECKING GAMEBANANA", "VÉRIFICATION SUR GAMEBANANA")
+    gbs = list(dict.fromkeys(gb for gb, _fid in groups))
+    pages, failed = {}, []
+    for i, gb in enumerate(gbs):
+        step(label, i, len(gbs))
+        try:
+            pages[gb] = mods.gamebanana_get(f"/Mod/{int(gb)}?_csvProperties=_aFiles")[0].get("_aFiles") or []
+        except Exception as ex:   # (no internet, GameBanana down, a page taken off: those mods as they are)
+            failed.append(ex)
+            if not pages and len(failed) == 3:   # (three in a row from the start: no internet, not worth 30 s a page)
+                break
+    if not pages:
+        say(L(f"GameBanana could not be asked ({failed[0]}): the file gives your mods as they are.",
+              f"GameBanana n'a pas pu être interrogé ({failed[0]}) : le fichier donne tes mods tels quels."))
+        return state
+    todo = []
+    for (gb, fid), names in groups.items():
+        e = state["mods"][names[0]]
+        title = e.get("title") or names[0]
+        if gb not in pages:
+            say(L(f"  {title}: its GameBanana page could not be read (not checked)",
+                  f"  {title} : sa page GameBanana n'a pas pu être lue (pas vérifié)"))
+            continue
+        new = newer_file(pages[gb], fid, e.get("file", ""), {f for g, f in groups if g == gb})
+        if new:
+            todo.append((gb, fid, names, title, new))
+        elif not any(str(f.get("_idRow")) == fid for f in pages[gb]):
+            say(L(f"  {title}: its file ({e.get('file') or fid}) is no longer on GameBanana: send the folder mods\\{names[0]} yourself",
+                  f"  {title} : son fichier ({e.get('file') or fid}) n'est plus sur GameBanana : envoie toi-même le dossier mods\\{names[0]}"))
+    if not todo:
+        say(L("Every GameBanana mod is at its newest file.", "Tous les mods GameBanana sont à leur dernière version."))
+        return state
+    say(L(f"{len(todo)} mod(s) have a newer file on GameBanana:", f"{len(todo)} mod(s) ont une version plus récente sur GameBanana :"))
+    for _gb, fid, names, title, new in todo:
+        say(f"  {title}: {state['mods'][names[0]].get('file') or fid} -> {new.get('_sFile')}")
+    try:
+        building = bool(os_mods.recomp_busy(tree.root))
+    except Exception:   # (upstream's check changed: the game's lock still says whether it runs)
+        building = False
+    if game_running(tree) or building:
+        say(L("The game (or a build of it) is running: close it, then make this file again to update them. "
+              "This file gives your versions.",
+              "Le jeu (ou sa compilation) tourne : ferme-le, puis refais ce fichier pour les mettre à jour. "
+              "Ce fichier donne tes versions."))
+        return state
+    stage = os.path.join(tree.root, "dump", "mods_update")
+    done = 0
+    for k, (gb, fid, names, title, new) in enumerate(todo, 1):
+        say(L(f"Updating {title} ({k}/{len(todo)})...", f"Mise à jour de {title} ({k}/{len(todo)})..."))
+        shutil.rmtree(stage, ignore_errors=True)
+        st = mods.Tree(os.path.join(stage, f"{gb}_{new['_idRow']}"))
+        try:
+            got = mods.gamebanana_install(st, gb, new["_idRow"], bar(L("UPDATING ", "MISE À JOUR : ") + title.upper()))
+        except Exception as ex:   # (mods.Error, the network, the archive: that mod stays as it is)
+            say(L(f"  not updated, the download failed ({ex}): the file gives your version",
+                  f"  pas mis à jour, le téléchargement a échoué ({ex}) : le fichier donne ta version"))
+            continue
+        staged = st.load()["mods"]
+        olds = [os.path.join(tree.mods, n) for n in names]
+        pairs = pair(olds, [os.path.join(st.mods, g) for g in got])
+        if pairs is None:
+            say(L("  not updated, its new version is laid out differently (update it by hand): the file gives your version",
+                  "  pas mis à jour, sa nouvelle version est organisée autrement (à mettre à jour à la main) : le fichier donne ta version"))
+            continue
+        extra = [g for g in got if os.path.join(st.mods, g) not in pairs.values()]   # (a part the new version adds)
+        taken = {x.lower() for x in os.listdir(tree.mods)}
+        moved, added = [], []
+        try:   # (the old folders aside under hidden names, the new ones to their names; the old ones go at the end)
+            for i, o in enumerate(olds):
+                tmp = os.path.join(tree.mods, f".mods-update-{os.getpid()}-{k}-{i}")
+                os.rename(o, tmp)
+                moved.append((o, tmp))
+            for o, n in pairs.items():
+                shutil.move(n, o)
+                moved.append((n, o))
+            for g in extra:
+                name = free_name(g, taken)
+                taken.add(name.lower())
+                shutil.move(os.path.join(st.mods, g), os.path.join(tree.mods, name))
+                moved.append((os.path.join(st.mods, g), os.path.join(tree.mods, name)))
+                added.append((name, g))
+        except OSError as ex:
+            for a, b in reversed(moved):   # (back as they were: nothing half updated)
+                try:
+                    shutil.move(b, a)
+                except OSError:
+                    pass
+            say(L(f"  not updated, a folder could not be moved ({ex}): close the windows open in the mods folder; the file gives your version",
+                  f"  pas mis à jour, un dossier n'a pas pu être déplacé ({ex}) : ferme les fenêtres ouvertes dans le dossier mods ; le fichier donne ta version"))
+            continue
+        for _o, tmp in moved[:len(olds)]:
+            shutil.rmtree(tmp, ignore_errors=True)
+        for o, n in pairs.items():   # (GameBanana's details of the new file; the switch and anything else as they were)
+            name = os.path.basename(o)
+            state["mods"][name] = dict(state["mods"][name], **{x: v for x, v in staged[os.path.basename(n)].items() if x != "enabled"})
+        at = max(i for i, x in enumerate(state["order"]) if x in names) + 1
+        for name, g in added:
+            state["mods"][name] = staged[g]
+        state["order"][at:at] = [name for name, _g in added]
+        tree.save(state)
+        done += 1
+        say(L(f"  updated: {new.get('_sFile')}", f"  mis à jour : {new.get('_sFile')}"))
+    shutil.rmtree(stage, ignore_errors=True)
+    if not done:
+        return tree.load()
+    step(L("APPLYING THE MODS", "APPLICATION DES MODS"))
+    say(L("Applying the mods...", "Application des mods..."))
+    try:
+        mods.apply(tree, lambda t: say("  " + str(t)))
+    except Exception as ex:   # (the game applies them at its next start)
+        os_mods.apply_pending(tree)
+        say(L(f"  not applied now ({ex}): start the game once, then make this file again",
+              f"  pas appliqués maintenant ({ex}) : lance le jeu une fois, puis refais ce fichier"))
+    return tree.load()
+
+
 # ---- make: the sender's side ------------------------------------------------------------------------------------
 def make(root, out):
     mods, os_mods, _std = tools(root)
     tree = mods.Tree(root)
-    state = tree.load()
+    state = update(mods, os_mods, tree, tree.load())
     hashes, listed = {}, []
     for i, n in enumerate(state["order"]):
         step(L("READING YOUR MODS", "LECTURE DE TES MODS"), i, len(state["order"]))
@@ -201,34 +429,6 @@ def make(root, out):
           "le fichier donne le même ordre)"))
     for c in found[:5]:
         say(f"  {c['path']}: {' > '.join(c['mods'])}")
-    say(L("Checking GameBanana for newer files...", "Recherche de versions plus récentes sur GameBanana..."))
-    label = L("CHECKING GAMEBANANA", "VÉRIFICATION SUR GAMEBANANA")
-    step(label)
-    get, asked = getattr(mods, "gamebanana_get", None), [0]
-    total = sum(1 for n in state["order"] if state["mods"][n].get("gamebanana") and state["mods"][n].get("file_id"))
-
-    def counted(*a, **k):   # (mods.updates asks GameBanana once per such mod of the order: the bar follows it)
-        step(label, asked[0], total)
-        asked[0] += 1
-        return get(*a, **k)
-    if get:
-        mods.gamebanana_get = counted
-    try:
-        ups = list({(u.get("title"), u.get("installed"), u.get("newest")): u for u in mods.updates(tree)}.values())   # (a pack's mods: one line)
-        if ups:
-            say(L(f"{len(ups)} mod(s) have a newer file on GameBanana; your friend gets YOUR version:",
-                  f"{len(ups)} mod(s) ont une version plus récente sur GameBanana ; le fichier donne TA version :"))
-            for u in ups:
-                say(f"  {u.get('title') or u['name']}: {u.get('installed', '')} -> {u.get('newest', '')}")
-            say(L("(the newest for both of you: update them in OpenSmash > Mods, then make this file again)",
-                  "(la plus récente pour vous deux : mets-les à jour dans OpenSmash > Mods, puis refais ce fichier)"))
-        else:
-            say(L("Every GameBanana mod is at its newest file.", "Tous les mods GameBanana sont à leur dernière version."))
-    except Exception as ex:   # (no internet, GameBanana down: only a note)
-        say(L(f"GameBanana could not be asked ({ex}).", f"GameBanana n'a pas pu être interrogé ({ex})."))
-    finally:
-        if get:
-            mods.gamebanana_get = get
     step(L("WRITING THE FILE", "ÉCRITURE DU FICHIER"), 1, 1)
     manifest = {"format": FORMAT, "version": 1, "sync": SYNC, "from": who,
                 "made": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "opensmash": version(root),
@@ -438,10 +638,15 @@ def sync(root, man):
     sources = {f for f, _n in moves}
     present = {x.lower(): x for x in os.listdir(tree.mods)}
     taken = set(present) | {n.lower() for n in want}
-    olds = {}
+    olds, drops = {}, []
     for n in list(plan) + list(staged):
         holder = present.get(n.lower())
         if holder is None or holder == plan.get(n) or holder in sources:
+            continue
+        gb = before["mods"].get(holder, {}).get("gamebanana")
+        if gb and str(gb) == str(want[n].get("gamebanana")):   # (this PC's other version of the sender's mod: replaced)
+            drops.append((holder, f".mods-sync-{os.getpid()}-old-{len(drops)}"))
+            moves.append(drops[-1])
             continue
         new = free_name(holder + L(" (old)", " (ancien)"), taken)
         taken.add(new.lower())
@@ -471,6 +676,10 @@ def sync(root, man):
         raise mods.Error(L(f"a mod folder could not be moved ({ex}): close every window open in the mods folder, then run this file again",
                            f"un dossier de mod n'a pas pu être déplacé ({ex}) : ferme les fenêtres ouvertes dans le dossier mods, puis relance ce fichier"))
     shutil.rmtree(stage, ignore_errors=True)
+    for holder, hidden in drops:
+        shutil.rmtree(os.path.join(tree.mods, hidden), ignore_errors=True)
+        say(L(f"  your {holder} (another version of {owner}'s mod) is replaced by {owner}'s",
+              f"  ton {holder} (une autre version du mod de {owner}) est remplacé par celui de {owner}"))
     for old, holder in olds.items():
         say(L(f"  your own {holder} (other files than {owner}'s) is kept as {old}, turned off",
               f"  ton propre {holder} (pas les mêmes fichiers que celui de {owner}) est gardé sous le nom {old}, désactivé"))
