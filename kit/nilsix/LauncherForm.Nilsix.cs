@@ -247,10 +247,10 @@ namespace OpenSmash.Launcher
                 while (titlePx > 18 * s && Theme.TextWidth(g, title, FD(titlePx), 0.3f * s) > maxW) titlePx -= 1 * s;
                 Theme.Label(g, title, FD(titlePx), A(Theme.Text), x + pad, cy + 52 * s, 26 * s, 0.3f * s);
                 Theme.DrawText(g, NT("Makes a file for a friend: it installs your mods, turns on and off the same ones, in your order, at your versions.",
-                                     "Crée un fichier pour un ami : il installe tes mods, active et désactive les mêmes, dans ton ordre, à tes versions."),
+                                     "Crée un fichier à envoyer : il installe tes mods, active et désactive les mêmes, dans ton ordre, à tes versions."),
                     FB(14 * s), A(Theme.Muted), x + pad, cy + 84 * s, maxW, 20 * s);
                 Theme.DrawText(g, NT("They double-click it with OpenSmash closed. SYNC OK and the same code as here: the same game online.",
-                                     "Il double-clique dessus, OpenSmash fermé. SYNCHRO OK et le même code qu'ici : le même jeu en ligne."),
+                                     "Double-clic dessus, OpenSmash fermé. SYNCHRO OK et le même code qu'ici : le même jeu en ligne."),
                     FB(14 * s), A(Theme.Muted), x + pad, cy + 106 * s, maxW, 20 * s);
                 Theme.ButtonAnimated(g, NT("MAKE THE FILE", "CRÉER LE FICHIER"), bx, cy + 22 * s, bw, 38 * s, s, primary: true,
                     Hov("nilsix:sync-make", canMake && _hover == "nilsix:sync-make"), canMake, 13 * s, _alpha, press: Press("nilsix:sync-make"));

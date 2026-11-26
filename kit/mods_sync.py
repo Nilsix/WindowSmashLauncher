@@ -240,7 +240,7 @@ def make(root, out):
         f.write(bat_text(manifest, safe))
     say(L(f"Written: {path}", f"Fichier créé : {path}"))
     say(L(f"Send it to your friend: they double-click it (OpenSmash closed). At the end it must say SYNC OK and {manifest['fingerprint']}.",
-          f"Envoie-le à ton ami : il double-clique dessus (OpenSmash fermé). À la fin, il doit voir SYNCHRO OK et {manifest['fingerprint']}."))
+          f"Envoie-le à la personne qui joue avec toi : OpenSmash fermé, elle double-clique dessus. À la fin, elle doit voir SYNCHRO OK et {manifest['fingerprint']}."))
     print("RESULT " + json.dumps({"ok": True, "file": path, "fingerprint": manifest["fingerprint"]}), flush=True)
     return 0
 
@@ -372,7 +372,7 @@ def sync(root, man):
         say(L(f"Warning: your OpenSmash is not the version {owner} has ({version(root)[:7] or '?'} here, "
               f"{man['opensmash'][:7]} there). Update both to the latest one (OpenSmash offers it when it starts).",
               f"Attention : ton OpenSmash n'est pas à la même version que celui de {owner} ({version(root)[:7] or '?'} ici, "
-              f"{man['opensmash'][:7]} chez lui). Mettez-vous tous les deux à jour (OpenSmash le propose au démarrage)."))
+              f"{man['opensmash'][:7]} chez {owner}). Mettez-vous tous les deux à jour (OpenSmash le propose au démarrage)."))
     order, want = [], {}
     for e in man.get("mods") or []:
         if isinstance(e, dict) and e.get("name") and isinstance(e.get("hash"), int):
@@ -557,7 +557,7 @@ def report(tree, man, mods, os_mods, problems=()):
         return 0
     say("")
     say(L(f"NOT IN SYNC with {owner} (online set {fingerprint(mine)} here, {man.get('fingerprint', '?')} there):",
-          f"PAS SYNCHRO avec {owner} (empreinte {fingerprint(mine)} ici, {man.get('fingerprint', '?')} chez lui) :"))
+          f"PAS SYNCHRO avec {owner} (empreinte {fingerprint(mine)} ici, {man.get('fingerprint', '?')} chez {owner}) :"))
     for line in diff:
         say("  " + line)
     return 1

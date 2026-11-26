@@ -40,12 +40,12 @@ Pour jouer en ligne avec des mods, il faut exactement les mêmes des deux côté
 1. Dans NILSIX TOOLS, clique sur **CRÉER LE FICHIER**. Ses étapes s'affichent dans la barre en bas, comme les tâches
    d'OpenSmash. `Synchro mods - <ton nom>.bat` arrive sur ton Bureau, avec un code (par exemple `8809-8748`). Le
    journal liste aussi les conflits entre tes mods, et ceux qui ont une version plus récente sur GameBanana.
-2. Envoie ce fichier à ton ami. Il ferme OpenSmash et double-clique dessus. Il n'a pas besoin de ce launcher :
-   OpenSmash suffit. Si Windows bloque un fichier téléchargé : « Informations complémentaires », puis « Exécuter quand
-   même ».
+2. Envoie ce fichier à la personne qui joue avec toi. Elle ferme OpenSmash et double-clique dessus. Elle n'a pas
+   besoin de ce launcher : OpenSmash suffit. Si Windows bloque un fichier téléchargé : « Informations
+   complémentaires », puis « Exécuter quand même ».
 3. Le fichier installe tes mods depuis GameBanana, aux mêmes versions que les tiens. Il active ceux que tu as activés
    et désactive les autres, dans ton ordre. Il met les mêmes plugins, puis applique les mods.
-4. À la fin, ton ami doit voir **SYNCHRO OK** et le même code que toi. Sinon, le fichier dit ce qui diffère.
+4. À la fin, elle doit voir **SYNCHRO OK** et le même code que toi. Sinon, le fichier dit ce qui diffère.
 
 Ses mods que tu n'as pas sont désactivés, jamais supprimés. Un de ses dossiers qui porte le nom d'un de tes mods mais
 contient d'autres fichiers est renommé « (ancien) » et désactivé. Un mod qui ne vient pas de GameBanana ne peut pas
