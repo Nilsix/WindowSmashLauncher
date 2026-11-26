@@ -192,7 +192,7 @@ def make(root, out):
     manual = [n for n, e in unique.items() if not (e.get("gamebanana") and e.get("file_id"))]
     if manual:
         say(L(f"Not from GameBanana (your friend needs these folders from you, mods\\<name>): {', '.join(manual)}",
-              f"Pas de GameBanana (ces dossiers sont à envoyer toi-même, mods\\<nom>) :{', '.join(manual)}"))
+              f"Pas de GameBanana (ces dossiers sont à envoyer toi-même, mods\\<nom>) : {', '.join(manual)}"))
     step(L("LOOKING FOR CONFLICTS", "RECHERCHE DES CONFLITS"))
     found = real_conflicts(mods, tree)
     say(L(f"Conflicts: {len(found)} file(s) changed by more than one turned-on mod (the later one in the order wins; "
