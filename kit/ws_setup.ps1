@@ -16,10 +16,11 @@
 # 5.3: since v0.5.0 the installer to check is tools\install_opensmash.ps1 (install_windowsmash.ps1 forwards to it).
 # 5.4: on a PC with a .NET SDK, OpenSmash.exe is the release's with a NILSIX TOOLS page (kit\nilsix_launcher.ps1).
 # 5.5: that OpenSmash.exe keeps itself and the page up to date, so the kit's shortcuts open it directly from then on.
+# 5.6: one shortcut per folder (the others the kit made are removed), the page's jobs in OpenSmash's bar at the bottom.
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '5.5 (2026-11-26)'
+$KitVersion = '5.6 (2026-11-26)'
 $Repo = 'OpenSmash-Ultimate/OpenSmash-Ultimate'
 $OldPin = '1a819b81b35b8ec3c0f4b0c6df3dab60eaf2244a'   # kit 4.5's pin
 $State = Join-Path $env:LOCALAPPDATA 'WindowSmash-setup'

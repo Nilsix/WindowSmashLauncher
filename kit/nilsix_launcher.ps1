@@ -1,16 +1,17 @@
-﻿# Nilsix tools in OpenSmash.exe (kit 5.4, 5.5): the release's launcher with one more page, NILSIX TOOLS
+﻿# Nilsix tools in OpenSmash.exe (kit 5.4 to 5.6): the release's launcher with one more page, NILSIX TOOLS
 # (kit\nilsix\LauncherForm.Nilsix.cs, with kit\mods_sync.py inside it), built here from the release's own sources (the
 # source archive of its commit, as GitHub serves it) with the release's version number, so OpenSmash sees itself up to
 # date. ssbu.exe is not touched: nothing changes online, friends who play with the release's OpenSmash.exe stay in sync.
 # Needs a .NET SDK 8 or newer; without one, or when the build fails, the release's OpenSmash.exe as before.
 # Two callers:
 # - ws_setup.ps1 (the kit's .bat) dot-sources this file: Install-NilsixLauncher for the latest release, then
-#   Set-NilsixShortcuts (the kit's shortcuts open OpenSmash.exe from then on);
+#   Set-NilsixShortcuts (the kit's shortcuts open OpenSmash.exe from then on, one per folder);
 # - OpenSmash.exe itself (LauncherForm.Nilsix.cs) runs it as a script, from a folder with the newest kit files of GitHub:
 #   at each start (a kit update: the same release, built again) and in place of its own self-update (a new release: built
 #   for it, then the game's update goes on). So once built, the launcher keeps itself and this page up to date, and the
 #   kit's .bat is only needed to install. When a new release's build fails, OpenSmash puts the release's launcher (no
-#   page) and the shortcuts open the .bat again, which tries the build at each start (Restore-NilsixShortcuts).
+#   page) and the shortcuts open the .bat again, which tries the build at each start (Restore-NilsixShortcuts); else
+#   they open OpenSmash.exe (Set-NilsixShortcuts again: nothing changes when they already do).
 # nilsix-launcher\record.json says what OpenSmash.exe is: a start with nothing new builds nothing.
 # This file must stay UTF-8 with a BOM and CRLF.
 
@@ -104,6 +105,11 @@ function Install-NilsixLauncher([string]$Game, [string]$Base, [string]$State, [s
             'new[] { ("nav:settings", "SETTINGS"), ("nav:nilsix", "NILSIX TOOLS"),' 2
         Add-NilsixHook (Join-Path $ui 'LauncherForm.Paint.cs') '_view == "competitive" ? "nav:competitive" : "nav:mods";' `
             '_view == "competitive" ? "nav:competitive" : _view == "nilsix" ? "nav:nilsix" : "nav:mods";' 1
+        # (the page's jobs in the bar at the bottom, as on the MODS page, rather than the home page's strip: SetLoad)
+        Add-NilsixHook (Join-Path $ui 'LauncherForm.Paint.cs') 'if (_loadOn && _view != "mods") PaintLoad(g, W, H);' `
+            'if (_loadOn && _view != "mods" && _view != "nilsix") PaintLoad(g, W, H);' 1
+        Add-NilsixHook (Join-Path $ui 'LauncherForm.Paint.cs') 'if (_loadOn && _view == "mods")' `
+            'if (_loadOn && (_view == "mods" || _view == "nilsix"))' 1
         Add-NilsixHook (Join-Path $ui 'LauncherForm.cs') 'if (ActivateCompetitiveHit(id)) return;' `
             'if (ActivateCompetitiveHit(id)) return;   if (ActivateNilsixHit(id)) return;' 1
         # (OpenSmash's self-update builds the next release's launcher with this page: LauncherForm.Nilsix.cs)
@@ -156,42 +162,71 @@ function Install-NilsixLauncher([string]$Game, [string]$Base, [string]$State, [s
 
 function Set-NilsixShortcuts([string]$Game, [string]$State, [string[]]$Dirs = @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'))) {
     # once OpenSmash.exe keeps itself up to date with this page, the kit's .bat is only needed to install: this user's
-    # shortcuts to it (the desktop's, the Start menu's) open OpenSmash.exe directly. What they were is kept in
-    # nilsix-launcher\shortcuts.txt (path, target, arguments, folder, icon; tab-separated) for Restore-NilsixShortcuts.
+    # shortcuts to it (the desktop's, the Start menu's) open OpenSmash.exe directly, one per folder. The kit's other
+    # ones (play, os-play: since kit 5.0 they opened the launcher too) are removed, and all of them when the folder has
+    # a shortcut of its own to OpenSmash.exe (OpenSmash's, in it or in its OpenSmash folder, or the user's). What they
+    # were is kept in nilsix-launcher\shortcuts.txt (path, target, arguments, folder, icon, then "removed" for a removed
+    # one; tab-separated) for Restore-NilsixShortcuts. Run again at each OpenSmash start, it changes nothing more.
     $exe = Join-Path $Game 'OpenSmash.exe'
     $saved = Join-Path $State 'nilsix-launcher\shortcuts.txt'
     $lines = @()
     try { $lines = @([IO.File]::ReadAllLines($saved)) } catch { }
     $shell = New-Object -ComObject WScript.Shell
     foreach ($dir in $Dirs) {
-        foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.lnk' -ErrorAction SilentlyContinue)) {
+        $kit = @(); $own = $null
+        foreach ($f in @(Get-ChildItem -LiteralPath $dir, "$dir\OpenSmash" -Filter '*.lnk' -ErrorAction SilentlyContinue)) {
             try {
                 $l = $shell.CreateShortcut($f.FullName)
-                if ([IO.Path]::GetFileName($l.TargetPath) -notin 'OpenSmash Ultimate Launcher.bat', 'OpenSmash Launcher.bat', 'WindowSmash Launcher.bat') { continue }
-                $lines = @($lines | Where-Object { ($_ -split "`t")[0] -ne $f.FullName }) + (@($f.FullName, $l.TargetPath, $l.Arguments, $l.WorkingDirectory, $l.IconLocation) -join "`t")
-                [IO.File]::WriteAllLines($saved, [string[]]$lines)   # (before the shortcut changes)
-                $icon = ($l.IconLocation -split ',')[0]
-                $l.TargetPath = $exe; $l.Arguments = ''; $l.WorkingDirectory = $Game
-                if (-not $icon -or -not (Test-Path -LiteralPath $icon)) { $l.IconLocation = "$exe,0" }
-                $l.Save()
-                Write-Host (L "  shortcut '$($f.BaseName)': opens OpenSmash.exe from now on" "  raccourci « $($f.BaseName) » : ouvre OpenSmash.exe désormais")
+                $was = @($lines | Where-Object { ($_ -split "`t")[0] -eq $f.FullName -and ($_ -split "`t")[5] -ne 'removed' })   # (one removed, made again since: not the kit's)
+                $top = $f.DirectoryName -eq $dir
+                if ($top -and [IO.Path]::GetFileName($l.TargetPath) -in 'OpenSmash Ultimate Launcher.bat', 'OpenSmash Launcher.bat', 'WindowSmash Launcher.bat') {
+                    $kit += [pscustomobject]@{ File = $f; Lnk = $l; Bat = $true; Keep = $false
+                                               Line = @($f.FullName, $l.TargetPath, $l.Arguments, $l.WorkingDirectory, $l.IconLocation) -join "`t" }
+                } elseif ($top -and $was.Count -and $l.TargetPath -ieq $exe) {   # (one this function set before)
+                    $kit += [pscustomobject]@{ File = $f; Lnk = $l; Bat = $false; Keep = $false; Line = (@($was[0] -split "`t")[0..4] -join "`t") }
+                } elseif ($l.TargetPath -ieq $exe -and -not $l.Arguments) { $own = $f.BaseName }
+            } catch { }
+        }
+        if (-not $kit.Count) { continue }
+        # (kept: the one that had no arguments, the launcher's)
+        if (-not $own) { ($kit | Sort-Object { [bool]($_.Line -split "`t")[2] }, { $_.File.Name } | Select-Object -First 1).Keep = $true }
+        if (-not @($kit | Where-Object { $_.Bat -or -not $_.Keep }).Count) { continue }   # (already one, set before)
+        foreach ($k in $kit) {
+            $lines = @($lines | Where-Object { ($_ -split "`t")[0] -ne $k.File.FullName }) + ($k.Line + $(if ($k.Keep) { '' } else { "`tremoved" }))
+        }
+        [IO.File]::WriteAllLines($saved, [string[]]$lines)   # (before the shortcuts change)
+        $same = if ($own) { $own } else { ($kit | Where-Object { $_.Keep }).File.BaseName }
+        foreach ($k in $kit) {
+            try {
+                if (-not $k.Keep) {
+                    Remove-Item -LiteralPath $k.File.FullName -Force
+                    Write-Host (L "  shortcut '$($k.File.BaseName)': removed, '$same' does the same" "  raccourci « $($k.File.BaseName) » : supprimé, « $same » fait la même chose")
+                } elseif ($k.Bat) {
+                    $icon = ($k.Lnk.IconLocation -split ',')[0]
+                    $k.Lnk.TargetPath = $exe; $k.Lnk.Arguments = ''; $k.Lnk.WorkingDirectory = $Game
+                    if (-not $icon -or -not (Test-Path -LiteralPath $icon)) { $k.Lnk.IconLocation = "$exe,0" }
+                    $k.Lnk.Save()
+                    Write-Host (L "  shortcut '$($k.File.BaseName)': opens OpenSmash.exe from now on" "  raccourci « $($k.File.BaseName) » : ouvre OpenSmash.exe désormais")
+                }
             } catch { }
         }
     }
 }
 
 function Restore-NilsixShortcuts([string]$State) {
-    # OpenSmash.exe is the release's again (a build failed): Set-NilsixShortcuts's shortcuts open the kit's .bat again,
-    # which tries the build at each start until it works, then sets them again
+    # OpenSmash.exe is the release's again (a build failed): Set-NilsixShortcuts's shortcuts open the kit's .bat again
+    # (the ones it removed are made again), which tries the build at each start until it works, then sets them again
     $saved = Join-Path $State 'nilsix-launcher\shortcuts.txt'
     if (-not (Test-Path -LiteralPath $saved)) { return }
     $shell = New-Object -ComObject WScript.Shell
     foreach ($line in [IO.File]::ReadAllLines($saved)) {
         $v = $line -split "`t"
-        if ($v.Count -ne 5 -or -not (Test-Path -LiteralPath $v[0]) -or -not (Test-Path -LiteralPath $v[1])) { continue }
+        if ($v.Count -lt 5 -or -not (Test-Path -LiteralPath $v[1])) { continue }
+        $removed = $v.Count -gt 5 -and $v[5] -eq 'removed'
+        if ((Test-Path -LiteralPath $v[0]) -eq $removed) { continue }   # (a removed one made again since, a set one deleted since)
         try {
             $l = $shell.CreateShortcut($v[0])
-            if ([IO.Path]::GetFileName($l.TargetPath) -ne 'OpenSmash.exe') { continue }   # (changed since: left as it is)
+            if (-not $removed -and [IO.Path]::GetFileName($l.TargetPath) -ne 'OpenSmash.exe') { continue }   # (changed since: left as it is)
             $l.TargetPath = $v[1]; $l.Arguments = $v[2]; $l.WorkingDirectory = $v[3]; $l.IconLocation = $v[4]
             $l.Save()
         } catch { }
@@ -224,7 +259,11 @@ if ($MyInvocation.InvocationName -ne '.') {
         }
         if (Install-NilsixLauncher ([string]$args[0]) '' $State $PSScriptRoot $v $c) { $code = if ($Script:NilsixBuilt) { 10 } else { 0 } }
     } catch { Write-Host $_.Exception.Message }
-    # (a new release not built: OpenSmash puts the release's launcher instead, without this page)
-    if ($code -eq 1 -and $args[1]) { try { Restore-NilsixShortcuts $State } catch { Write-Host $_.Exception.Message } }
+    # the shortcuts follow: OpenSmash.exe with this page, they open it (one per folder); a new release not built (OpenSmash
+    # puts the release's launcher instead, without this page), they open the .bat again
+    try {
+        if ($code -ne 1) { Set-NilsixShortcuts ([string]$args[0]) $State }
+        elseif ($args[1]) { Restore-NilsixShortcuts $State }
+    } catch { Write-Host $_.Exception.Message }
     exit $code
 }

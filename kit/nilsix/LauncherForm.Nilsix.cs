@@ -17,7 +17,7 @@ namespace OpenSmash.Launcher
     // Mods sync: MAKE THE FILE runs mods_sync.py make (embedded, Nilsix.mods_sync.py) with the folder's Python. It writes
     // "Synchro mods - <name>.bat" (English: "Mods sync - <name>.bat") on the desktop; a friend double-clicks it and their
     // mods become these: the same folders, switches, order and versions, then checked against the set the game reports
-    // online.
+    // online. Its steps show in the bar at the bottom (SetLoad), as OpenSmash's own jobs do on the MODS page.
     // Updates: this launcher keeps itself and this page up to date (the kit's .bat is only needed to install). At each
     // start, kit\nilsix_launcher.ps1 with the newest kit files of GitHub, in the background: when they changed, this
     // release's launcher is built again with them (used from the next start). And OpenSmash's self-update builds the new
@@ -140,6 +140,7 @@ namespace OpenSmash.Launcher
             lock (_nilsixLog) _nilsixLog.Clear();
             _nilsixFile = _nilsixPrint = null;
             _nilsixFailed = false;
+            SetLoad(NT("MAKING THE FILE", "CRÉATION DU FICHIER"), -1);   // (the bar at the bottom; mods_sync.py's steps then)
             try
             {
                 string dir = Path.Combine(Path.GetTempPath(), "opensmash-nilsix");
@@ -172,6 +173,7 @@ namespace OpenSmash.Launcher
                         {
                             _nilsixFailed = code != 0 || _nilsixFile == null;
                             _nilsixProc = null;
+                            ClearLoad();
                             p.Dispose();
                             Invalidate();
                         }));
@@ -187,6 +189,7 @@ namespace OpenSmash.Launcher
             {
                 _nilsixProc = null;
                 _nilsixFailed = true;
+                ClearLoad();
                 NilsixLine(NT("Could not start the tool: ", "Impossible de lancer l'outil : ") + e.Message);
             }
             Invalidate();
@@ -195,6 +198,13 @@ namespace OpenSmash.Launcher
         void NilsixLine(string? line)
         {
             if (line == null) return;
+            if (line.StartsWith("PROGRESS ", StringComparison.Ordinal))   // (mods_sync.py's step: "PROGRESS <0..1 or -1> <label>")
+            {
+                string[] p = line.Split(' ', 3);
+                if (p.Length == 3 && float.TryParse(p[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float f))
+                    SetLoad(p[2], f);
+                return;
+            }
             if (line.StartsWith("RESULT ", StringComparison.Ordinal))   // (mods_sync.py's last line: the file and its fingerprint)
             {
                 try
@@ -218,7 +228,7 @@ namespace OpenSmash.Launcher
         {
             float s = _s, x = Gutter * s, cw = W - 2 * x;
             PaintSectionHead(g, "04 / NILSIX TOOLS", "NILSIX TOOLS");
-            bool running = _nilsixProc != null;
+            bool running = _nilsixProc != null, canMake = !running && !Busy;   // (Busy: another job has the bar at the bottom)
 
             // the mods sync card: what it does, the main button and the file's folder
             float cy = ContentTop * s, ch = 132 * s, cut = 22 * s, pad = 24 * s;
@@ -243,8 +253,8 @@ namespace OpenSmash.Launcher
                                      "Il double-clique dessus, OpenSmash fermé. SYNCHRO OK et le même code qu'ici : le même jeu en ligne."),
                     FB(14 * s), A(Theme.Muted), x + pad, cy + 106 * s, maxW, 20 * s);
                 Theme.ButtonAnimated(g, NT("MAKE THE FILE", "CRÉER LE FICHIER"), bx, cy + 22 * s, bw, 38 * s, s, primary: true,
-                    Hov("nilsix:sync-make", !running && _hover == "nilsix:sync-make"), !running, 13 * s, _alpha, press: Press("nilsix:sync-make"));
-                if (!running) AddHit("nilsix:sync-make", bx, cy + 22 * s, bw, 38 * s);
+                    Hov("nilsix:sync-make", canMake && _hover == "nilsix:sync-make"), canMake, 13 * s, _alpha, press: Press("nilsix:sync-make"));
+                if (canMake) AddHit("nilsix:sync-make", bx, cy + 22 * s, bw, 38 * s);
                 bool canOpen = !running && _nilsixFile != null;
                 Theme.ButtonAnimated(g, NT("SHOW THE FILE", "VOIR LE FICHIER"), bx, cy + 70 * s, bw, 32 * s, s, primary: false,
                     Hov("nilsix:sync-open", canOpen && _hover == "nilsix:sync-open"), canOpen, 12 * s, _alpha, press: Press("nilsix:sync-open"));

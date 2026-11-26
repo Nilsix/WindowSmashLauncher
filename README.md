@@ -37,9 +37,9 @@ l'OpenSmash.exe normal. Sans le SDK .NET, tu gardes l'OpenSmash.exe normal.
 
 Pour jouer en ligne avec des mods, il faut exactement les mêmes des deux côtés :
 
-1. Dans NILSIX TOOLS, clique sur **CRÉER LE FICHIER**. `Synchro mods - <ton nom>.bat` arrive sur ton Bureau, avec
-   un code (par exemple `8809-8748`). Le journal liste aussi les conflits entre tes mods, et ceux qui ont une
-   version plus récente sur GameBanana.
+1. Dans NILSIX TOOLS, clique sur **CRÉER LE FICHIER**. Ses étapes s'affichent dans la barre en bas, comme les tâches
+   d'OpenSmash. `Synchro mods - <ton nom>.bat` arrive sur ton Bureau, avec un code (par exemple `8809-8748`). Le
+   journal liste aussi les conflits entre tes mods, et ceux qui ont une version plus récente sur GameBanana.
 2. Envoie ce fichier à ton ami. Il ferme OpenSmash et double-clique dessus. Il n'a pas besoin de ce launcher :
    OpenSmash suffit. Si Windows bloque un fichier téléchargé : « Informations complémentaires », puis « Exécuter quand
    même ».
@@ -54,7 +54,9 @@ contient d'autres fichiers est renommé « (ancien) » et désactivé. Un mod qu
 ### Les mises à jour
 
 Avec NILSIX TOOLS, ce launcher ne sert qu'à installer : ensuite, ses raccourcis (Bureau, menu Démarrer) ouvrent
-directement OpenSmash.exe, qui se met à jour tout seul.
+directement OpenSmash.exe, qui se met à jour tout seul. Il n'en garde qu'un par dossier : ses autres raccourcis
+(« Smash Ultimate (...) ») sont supprimés, et tous quand le dossier a déjà le sien vers OpenSmash.exe (par exemple
+« OpenSmash » dans le menu Démarrer).
 
 - Une nouvelle version d'OpenSmash : OpenSmash la propose comme d'habitude. Si tu acceptes, son nouveau launcher est
   compilé chez toi avec l'onglet NILSIX TOOLS (de 30 secondes à quelques minutes), puis OpenSmash redémarre et met le
@@ -62,9 +64,25 @@ directement OpenSmash.exe, qui se met à jour tout seul.
 - Une nouvelle version de NILSIX TOOLS : OpenSmash la cherche à chaque démarrage, en arrière-plan, et la compile. Elle
   sert à partir du démarrage suivant. L'état s'affiche à droite du journal, dans l'onglet.
 - Si la compilation échoue (par exemple quand OpenSmash a changé une partie du code dont l'onglet a besoin), OpenSmash
-  prend son launcher normal, sans l'onglet, et les raccourcis rouvrent ce launcher. Il retente la compilation à chaque
-  lancement, jusqu'à ce que le kit soit corrigé. Le détail est dans
+  prend son launcher normal, sans l'onglet, et les raccourcis redeviennent ceux d'avant. Il retente la compilation à
+  chaque lancement, jusqu'à ce que le kit soit corrigé. Le détail est dans
   `%LOCALAPPDATA%\WindowSmash-setup\nilsix-launcher\update.log`.
+
+## Ça ne marche pas ? Le diagnostic
+
+Fais un clic droit sur [Diagnostic OpenSmash.bat](https://github.com/Nilsix/WindowSmashLauncher/raw/main/Diagnostic%20OpenSmash.bat),
+puis « Enregistrer le lien sous… », et double-clique sur le fichier. Si tu as ce launcher, il est déjà là :
+`%LOCALAPPDATA%\WindowSmashLauncher\Diagnostic OpenSmash.bat`. Si Windows le bloque : « Informations
+complémentaires », puis « Exécuter quand même ».
+
+En une minute environ, il écrit `Diagnostic OpenSmash.txt` sur ton Bureau, avec en haut ce qui semble ne pas aller.
+Envoie ce fichier à Nilsix.
+
+Il ne change rien. Il lit ton PC (Windows, processeur, RAM, carte graphique, disques), l'état du dossier du jeu,
+d'OpenSmash.exe et de NILSIX TOOLS, tes réglages et ta liste de mods. Il vérifie aussi l'accès aux sites dont les mises
+à jour ont besoin, et lit la fin des journaux d'OpenSmash et de son dernier rapport. Il ne lit jamais tes clés
+(`prod.keys`), les fichiers du jeu, ta connexion au compte ou à Discord, ni les fichiers `.dmp`. Ton nom d'utilisateur
+Windows, le nom du PC et les adresses IP publiques sont masqués dans le rapport.
 
 ## Pour les développeurs
 
@@ -74,16 +92,21 @@ directement OpenSmash.exe, qui se met à jour tout seul.
 - `kit/ws_setup.ps1` : le kit 5, qui passe la main à OpenSmash.exe (PowerShell 5.1, UTF-8 avec BOM et CRLF).
 - `kit-opensmash/os_setup.ps1` : renvoie vers `kit/ws_setup.ps1` (pour les anciennes amorces OpenSmash).
 - `kit/nilsix_launcher.ps1` : compile OpenSmash.exe avec la page NILSIX TOOLS, à partir de l'archive des sources du
-  commit de la version publiée (téléchargée sur GitHub). Il ajoute 6 points d'accroche dans `OpenSmash.Launcher` ; si
+  commit de la version publiée (téléchargée sur GitHub). Il ajoute 8 points d'accroche dans `OpenSmash.Launcher` ; si
   l'un d'eux a changé en amont, rien n'est compilé et l'OpenSmash.exe publié est mis à la place.
   `%LOCALAPPDATA%\WindowSmash-setup\nilsix-launcher\record.json` évite de recompiler quand rien n'a changé.
   OpenSmash.exe le lance aussi comme script, avec les fichiers du kit téléchargés sur GitHub : à chaque démarrage, et à
   la place de sa propre mise à jour (`nilsix_launcher.ps1 <dossier> [<version> <commit>]` ; code de sortie 0 = déjà
   compilé, 10 = compilé à l'instant, 1 = pas compilé). `Set-NilsixShortcuts` fait ouvrir OpenSmash.exe aux raccourcis
-  du .bat, `Restore-NilsixShortcuts` les remet comme avant (`nilsix-launcher\shortcuts.txt`).
+  du .bat et n'en garde qu'un par dossier (il repasse à chaque démarrage réussi) ; `Restore-NilsixShortcuts` les remet
+  comme avant, les supprimés compris (`nilsix-launcher\shortcuts.txt` : une ligne par raccourci, `removed` en 6e champ).
 - `kit/nilsix/LauncherForm.Nilsix.cs` : la page NILSIX TOOLS, dessinée avec les mêmes fonctions que les autres pages,
   et ses mises à jour (la vérification au démarrage, `NilsixReplaceLauncherAsync`). `NILSIX_KIT_URL` (par exemple
   `file:///D:/WindowSmashLauncher/kit/`) remplace GitHub pour les tests.
 - `kit/mods_sync.py` : `make` écrit le fichier .bat, qui contient ce script et la liste des mods. Chez l'ami, `sync`
   fait la synchro puis la vérifie (`check` vérifie seulement). Le code est calculé sur la liste de mods que le jeu
-  échange en ligne (`runtime/net_relay.c`) ; la vérification compare aussi l'ordre des mods et les plugins.
+  échange en ligne (`runtime/net_relay.c`) ; la vérification compare aussi l'ordre des mods et les plugins. Les étapes
+  de `make` vont dans la barre en bas d'OpenSmash (lignes `PROGRESS <0 à 1, ou -1> <texte>`, `SetLoad`).
+- `Diagnostic OpenSmash.bat` : le diagnostic, un script PowerShell entre `#@@BEGIN diag.ps1` et `#@@END diag.ps1`
+  (CRLF, en-tête ASCII). `OPENSMASH_DIAG_OUT` change le fichier écrit, `OPENSMASH_DIAG_QUIET=1` n'ouvre pas
+  l'Explorateur.

@@ -45,6 +45,12 @@ def say(text=""):
     print(text, flush=True)
 
 
+def step(label, done=-1, total=0):
+    """make's step for OpenSmash.exe's NILSIX TOOLS page (LauncherForm.Nilsix.cs NilsixLine), which shows it in the
+    bar at the bottom as OpenSmash's own jobs: "PROGRESS <0..1, or -1 while not known> <label>", not in the log"""
+    print(f"PROGRESS {done / total if total else -1:.3f} {label}", flush=True)
+
+
 # ---- what the game reports online ---------------------------------------------------------------------------------
 def fnv64(h, data):
     for b in data:
@@ -164,7 +170,8 @@ def make(root, out):
     tree = mods.Tree(root)
     state = tree.load()
     hashes, listed = {}, []
-    for n in state["order"]:
+    for i, n in enumerate(state["order"]):
+        step(L("READING YOUR MODS", "LECTURE DE TES MODS"), i, len(state["order"]))
         if n not in hashes:
             hashes[n] = tree_hash(os.path.join(tree.mods, n))[0]
         m = state["mods"][n]
@@ -186,6 +193,7 @@ def make(root, out):
     if manual:
         say(L(f"Not from GameBanana (your friend needs these folders from you, mods\\<name>): {', '.join(manual)}",
               f"Pas de GameBanana (ton ami doit recevoir ces dossiers de toi, mods\\<nom>) : {', '.join(manual)}"))
+    step(L("LOOKING FOR CONFLICTS", "RECHERCHE DES CONFLITS"))
     found = real_conflicts(mods, tree)
     say(L(f"Conflicts: {len(found)} file(s) changed by more than one turned-on mod (the later one in the order wins; "
           "your friend gets the same order)",
@@ -194,6 +202,17 @@ def make(root, out):
     for c in found[:5]:
         say(f"  {c['path']}: {' > '.join(c['mods'])}")
     say(L("Checking GameBanana for newer files...", "Recherche de versions plus récentes sur GameBanana..."))
+    label = L("CHECKING GAMEBANANA", "VÉRIFICATION SUR GAMEBANANA")
+    step(label)
+    get, asked = getattr(mods, "gamebanana_get", None), [0]
+    total = sum(1 for n in state["order"] if state["mods"][n].get("gamebanana") and state["mods"][n].get("file_id"))
+
+    def counted(*a, **k):   # (mods.updates asks GameBanana once per such mod of the order: the bar follows it)
+        step(label, asked[0], total)
+        asked[0] += 1
+        return get(*a, **k)
+    if get:
+        mods.gamebanana_get = counted
     try:
         ups = list({(u.get("title"), u.get("installed"), u.get("newest")): u for u in mods.updates(tree)}.values())   # (a pack's mods: one line)
         if ups:
@@ -207,6 +226,10 @@ def make(root, out):
             say(L("Every GameBanana mod is at its newest file.", "Tous les mods GameBanana sont à leur dernière version."))
     except Exception as ex:   # (no internet, GameBanana down: only a note)
         say(L(f"GameBanana could not be asked ({ex}).", f"GameBanana n'a pas pu être interrogé ({ex})."))
+    finally:
+        if get:
+            mods.gamebanana_get = get
+    step(L("WRITING THE FILE", "ÉCRITURE DU FICHIER"), 1, 1)
     manifest = {"format": FORMAT, "version": 1, "sync": SYNC, "from": who,
                 "made": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "opensmash": version(root),
                 "code_patches": code, "mods": listed, "set": [[n, h] for n, h in expected],
