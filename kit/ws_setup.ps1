@@ -14,10 +14,11 @@
 # Game files, builds, save and settings stay. This file must stay UTF-8 with a BOM and CRLF.
 # Kit 5.1 (522ff00) brought kit 4.4's dual boot back (2 = ssbu-recomp, kit-opensmash\os_kit.ps1); 5.2 removes it again.
 # 5.3: since v0.5.0 the installer to check is tools\install_opensmash.ps1 (install_windowsmash.ps1 forwards to it).
+# 5.4: on a PC with a .NET SDK, OpenSmash.exe is the release's with a NILSIX TOOLS page (kit\nilsix_launcher.ps1).
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '5.3 (2026-11-26)'
+$KitVersion = '5.4 (2026-11-26)'
 $Repo = 'OpenSmash-Ultimate/OpenSmash-Ultimate'
 $OldPin = '1a819b81b35b8ec3c0f4b0c6df3dab60eaf2244a'   # kit 4.5's pin
 $State = Join-Path $env:LOCALAPPDATA 'WindowSmash-setup'
@@ -142,31 +143,39 @@ if ($Game) { $dir = $Game } else {
 }
 $exe = Join-Path $dir 'OpenSmash.exe'
 $base = "https://github.com/$Repo/releases/download/$([uri]::EscapeDataString($Tag))"
-$shaFile = Join-Path $State 'OpenSmash.exe.sha256'
-try { Get-Text "$base/OpenSmash.exe.sha256" $shaFile } catch {
-    Fail "Could not download OpenSmash.exe.sha256 ($($_.Exception.Message)). Start the launcher again in a moment." `
-         "Impossible de télécharger OpenSmash.exe.sha256 ($($_.Exception.Message)). Relance le launcher dans un moment."
+# with the NILSIX TOOLS page when this PC can build it, else the release's own
+$nilsix = $false
+if ($Game) {
+    try { . (Join-Path $PSScriptRoot 'nilsix_launcher.ps1'); $nilsix = Install-NilsixLauncher $Game $base $State $PSScriptRoot }
+    catch { $nilsix = $false; Write-Host "  Nilsix tools: $($_.Exception.Message)" -ForegroundColor Yellow }   # (the release's then)
 }
-$want = ([regex]::Match([IO.File]::ReadAllText($shaFile), '[0-9a-fA-F]{64}')).Value.ToLower()
-if (-not $want) { Fail 'OpenSmash.exe.sha256 holds no checksum.' "OpenSmash.exe.sha256 ne contient pas d'empreinte." }
-if (-not (Test-Path -LiteralPath $exe) -or (Get-Sha256 $exe) -ne $want) {
-    Write-Host (L "Downloading OpenSmash.exe $Tag (70 MB)..." "Téléchargement d'OpenSmash.exe $Tag (70 Mo)...")
-    $part = "$exe.download"
-    try { Get-Text "$base/OpenSmash.exe" $part } catch {
-        Fail "Could not download OpenSmash.exe ($($_.Exception.Message)). Start the launcher again in a moment." `
-             "Impossible de télécharger OpenSmash.exe ($($_.Exception.Message)). Relance le launcher dans un moment."
+if (-not $nilsix) {
+    $shaFile = Join-Path $State 'OpenSmash.exe.sha256'
+    try { Get-Text "$base/OpenSmash.exe.sha256" $shaFile } catch {
+        Fail "Could not download OpenSmash.exe.sha256 ($($_.Exception.Message)). Start the launcher again in a moment." `
+             "Impossible de télécharger OpenSmash.exe.sha256 ($($_.Exception.Message)). Relance le launcher dans un moment."
     }
-    if ((Get-Sha256 $part) -ne $want) {
-        Remove-Item -LiteralPath $part -Force
-        Fail 'The downloaded OpenSmash.exe does not match its checksum; it was deleted. Start the launcher again.' `
-             "L'OpenSmash.exe téléchargé ne correspond pas à son empreinte ; il a été supprimé. Relance le launcher."
-    }
-    try { Move-Item -LiteralPath $part -Destination $exe -Force }
-    catch {
-        Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
-        if (-not (Test-Path -LiteralPath $exe)) { Fail "Could not write $exe ($($_.Exception.Message))." "Impossible d'écrire $exe ($($_.Exception.Message))." }
-        Write-Host (L '  (OpenSmash is open: it keeps its version until it is closed and the launcher started again)' `
-                      "  (OpenSmash est ouvert : il garde sa version jusqu'à ce qu'il soit fermé et le launcher relancé)") -ForegroundColor Yellow
+    $want = ([regex]::Match([IO.File]::ReadAllText($shaFile), '[0-9a-fA-F]{64}')).Value.ToLower()
+    if (-not $want) { Fail 'OpenSmash.exe.sha256 holds no checksum.' "OpenSmash.exe.sha256 ne contient pas d'empreinte." }
+    if (-not (Test-Path -LiteralPath $exe) -or (Get-Sha256 $exe) -ne $want) {
+        Write-Host (L "Downloading OpenSmash.exe $Tag (70 MB)..." "Téléchargement d'OpenSmash.exe $Tag (70 Mo)...")
+        $part = "$exe.download"
+        try { Get-Text "$base/OpenSmash.exe" $part } catch {
+            Fail "Could not download OpenSmash.exe ($($_.Exception.Message)). Start the launcher again in a moment." `
+                 "Impossible de télécharger OpenSmash.exe ($($_.Exception.Message)). Relance le launcher dans un moment."
+        }
+        if ((Get-Sha256 $part) -ne $want) {
+            Remove-Item -LiteralPath $part -Force
+            Fail 'The downloaded OpenSmash.exe does not match its checksum; it was deleted. Start the launcher again.' `
+                 "L'OpenSmash.exe téléchargé ne correspond pas à son empreinte ; il a été supprimé. Relance le launcher."
+        }
+        try { Move-Item -LiteralPath $part -Destination $exe -Force }
+        catch {
+            Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+            if (-not (Test-Path -LiteralPath $exe)) { Fail "Could not write $exe ($($_.Exception.Message))." "Impossible d'écrire $exe ($($_.Exception.Message))." }
+            Write-Host (L '  (OpenSmash is open: it keeps its version until it is closed and the launcher started again)' `
+                          "  (OpenSmash est ouvert : il garde sa version jusqu'à ce qu'il soit fermé et le launcher relancé)") -ForegroundColor Yellow
+        }
     }
 }
 Write-Host (L 'Starting OpenSmash. If it offers an update, accept it: it updates the game and rebuilds it.' `
