@@ -3,10 +3,7 @@
 # Kits 1.x to 4.x built the game themselves at a pinned commit so that every friend had the same build. Since v0.4.0
 # (2026-11-17) the project ships versioned releases and OpenSmash.exe updates every copy to the latest one, which is
 # that same job; v0.4.0 also removed Play SSBU.bat and moved Python to deps\venv, which kit 4 relied on.
-# Kit 5.1 keeps kit 4.4's dual boot: with no mode the launcher asks 1) OpenSmash Ultimate (OpenSmash.exe's window) or
-# 2) OpenSmash (ssbu-recomp, the other game, with this launcher's own menu: kit-opensmash\os_kit.ps1); the os-* modes
-# (the 'Smash Ultimate (OpenSmash)' shortcut passes os-play) go straight to the latter.
-# What OpenSmash Ultimate gets at every start (any other mode: old shortcuts pass play, diag...):
+# What this does at every start (any mode: old shortcuts pass play, diag, os-play...):
 # 1. Finds the game folder: kit 4's repo.txt, else the one OpenSmash.exe remembers. A folder kit 4 made is a git
 #    checkout detached at its pin, and OpenSmash.exe's Update only pulls a checkout of main (to main's newest commit,
 #    not the release). So its .git is renamed to .git-kit4 (kept: rename it back to get git again) and
@@ -15,10 +12,11 @@
 # 2. Puts the latest release's OpenSmash.exe in that folder (checked against its .sha256), or in Downloads when there
 #    is no folder yet (its first-start screen then sets one up), and starts it.
 # Game files, builds, save and settings stay. This file must stay UTF-8 with a BOM and CRLF.
+# Kit 5.1 (522ff00) brought kit 4.4's dual boot back (2 = ssbu-recomp, kit-opensmash\os_kit.ps1); 5.2 removes it again.
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '5.1 (2026-11-18)'
+$KitVersion = '5.2 (2026-11-26)'
 $Repo = 'OpenSmash-Ultimate/OpenSmash-Ultimate'
 $OldPin = '1a819b81b35b8ec3c0f4b0c6df3dab60eaf2244a'   # kit 4.5's pin
 $State = Join-Path $env:LOCALAPPDATA 'WindowSmash-setup'
@@ -44,47 +42,6 @@ Write-Host "OpenSmash Ultimate Launcher - kit $KitVersion"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $ProgressPreference = 'SilentlyContinue'
 New-Item -ItemType Directory -Force -Path $State | Out-Null
-
-# ---- the dual boot: OpenSmash (ssbu-recomp) is kit-opensmash\os_kit.ps1, run in a PowerShell of its own that inherits
-# this console ('&' would mix its names with this file's; Start-Process -Wait would also wait for the game it starts).
-# Its exit codes: 0, 10 (a failure it reported), 3 (back to this menu).
-$OsModes = @('os', 'os-install', 'os-play', 'os-play-rollback', 'os-play-norollback', 'os-diag', 'os-dlc', 'os-unlock', 'os-lowspec')
-function Invoke-OsKit([string]$OsMode) {
-    $kit = Join-Path (Split-Path $PSScriptRoot -Parent) 'kit-opensmash\os_kit.ps1'
-    if (-not (Test-Path -LiteralPath $kit -PathType Leaf)) {
-        Fail "OpenSmash's part of the launcher is missing ($kit; an antivirus may have removed it)." `
-             "La partie OpenSmash du launcher manque ($kit ; un antivirus l'a peut-être supprimée)."
-    }
-    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $kit, '-KitVersion', $KitVersion, '-KitDir', $KitDir)
-    $sub = $OsMode -replace '^os-?', ''
-    if ($sub) { $argv += @('-Mode', $sub) }
-    $q = foreach ($a in $argv) {      # (the command line rules: a quoted argument's backslashes before a quote are doubled)
-        if ($a -and $a -notmatch '[\s"]') { $a } else { '"' + (($a -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"' }
-    }
-    $psi = New-Object Diagnostics.ProcessStartInfo (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
-    $psi.Arguments = $q -join ' '
-    $psi.UseShellExecute = $false
-    $psi.WorkingDirectory = (Get-Location).Path
-    try { $p = [Diagnostics.Process]::Start($psi); $p.WaitForExit(); return $p.ExitCode }
-    catch { Fail "OpenSmash's part did not start: $($_.Exception.Message)" "La partie OpenSmash n'a pas démarré : $($_.Exception.Message)" }
-}
-# An old OpenSmash launcher file (kit-opensmash 1.x, through kit-opensmash\os_setup.ps1) plays OpenSmash when it is there.
-$osDir = Read-FirstLine (Join-Path $State 'opensmash-repo.txt')
-if ($Mode -like 'play*' -and $env:WSL_SELF -and (Split-Path $env:WSL_SELF -Leaf) -eq 'OpenSmash Launcher.bat' -and $osDir -and (Test-Path -LiteralPath $osDir)) { $Mode = "os-$Mode" }
-while ($true) {
-    if (-not $Mode) {
-        Write-Host ''
-        Write-Host (L '  1) OpenSmash Ultimate (its own window: install, update, play)' '  1) OpenSmash Ultimate (sa propre fenêtre : installer, mettre à jour, jouer)')
-        Write-Host (L '  2) OpenSmash (ssbu-recomp, the other game): install, play, rollback...' '  2) OpenSmash (ssbu-recomp, l''autre jeu) : installer, jouer, rollback...') -ForegroundColor Cyan
-        if ("$(Read-Host (L '  Your choice [1]' '  Ton choix [1]'))".Trim() -ne '2') { break }
-        $Mode = 'os'
-    }
-    if ($OsModes -notcontains $Mode) { break }
-    $rc = Invoke-OsKit $Mode
-    if ($rc -ne 3) { exit $rc }
-    $Mode = ''
-    try { $Fr = ([IO.File]::ReadAllText((Join-Path $State 'lang.txt'))).Trim() -eq 'fr' } catch { }   # (its menu's 8 may have changed it)
-}
 
 # ---- the game folder
 $Game = Read-FirstLine (Join-Path $State 'repo.txt')

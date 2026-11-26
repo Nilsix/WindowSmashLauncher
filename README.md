@@ -24,22 +24,13 @@ Nouveau joueur ? Le plus simple est de télécharger directement
 voir le [guide d'installation](https://github.com/OpenSmash-Ultimate/OpenSmash-Ultimate/blob/main/docs/INSTALL.md).
 Il te faut ton jeu en 13.0.5, ton `prod.keys`, et environ 60 Go libres.
 
-## Le double boot
-
-Au lancement, le launcher demande quel jeu ouvrir :
-
-- **1) OpenSmash Ultimate** (choix par défaut) : il ouvre la fenêtre d'OpenSmash.exe, comme décrit plus haut.
-- **2) OpenSmash** (ssbu-recomp, l'autre jeu) : il ouvre le menu de ce launcher pour ssbu-recomp (installer, jouer,
-  rollback, diagnostic, DLC, déblocage des personnages, mode PC peu puissant). `0` revient au choix du jeu.
-
-Le raccourci « Smash Ultimate (OpenSmash) » lance directement ssbu-recomp.
+Le double boot (option 8, OpenSmash = ssbu-recomp) n'existe plus : une installation ssbu-recomp reste sur ton disque
+et se lance avec ses propres fichiers.
 
 ## Pour les développeurs
 
 - `OpenSmash Ultimate Launcher.bat` : l'amorce (Git, clone et mise à jour de ce dépôt, redémarrage, puis le kit).
   `WindowSmash Launcher.bat` et `OpenSmash Launcher.bat` en sont des copies identiques : les anciens launchers se
   mettent à jour depuis le fichier de leur nom (garder les trois identiques).
-- `kit/ws_setup.ps1` : le kit 5, qui demande le jeu, puis passe la main à OpenSmash.exe ou à `kit-opensmash/os_kit.ps1`
-  (PowerShell 5.1, UTF-8 avec BOM et CRLF).
-- `kit-opensmash/os_kit.ps1` : le menu de ssbu-recomp (choix 2 et modes `os-*`), épinglé sur son dernier commit.
+- `kit/ws_setup.ps1` : le kit 5, qui passe la main à OpenSmash.exe (PowerShell 5.1, UTF-8 avec BOM et CRLF).
 - `kit-opensmash/os_setup.ps1` : renvoie vers `kit/ws_setup.ps1` (pour les anciennes amorces OpenSmash).
