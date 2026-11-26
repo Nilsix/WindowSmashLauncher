@@ -13,10 +13,11 @@
 #    is no folder yet (its first-start screen then sets one up), and starts it.
 # Game files, builds, save and settings stay. This file must stay UTF-8 with a BOM and CRLF.
 # Kit 5.1 (522ff00) brought kit 4.4's dual boot back (2 = ssbu-recomp, kit-opensmash\os_kit.ps1); 5.2 removes it again.
+# 5.3: since v0.5.0 the installer to check is tools\install_opensmash.ps1 (install_windowsmash.ps1 forwards to it).
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '5.2 (2026-11-26)'
+$KitVersion = '5.3 (2026-11-26)'
 $Repo = 'OpenSmash-Ultimate/OpenSmash-Ultimate'
 $OldPin = '1a819b81b35b8ec3c0f4b0c6df3dab60eaf2244a'   # kit 4.5's pin
 $State = Join-Path $env:LOCALAPPDATA 'WindowSmash-setup'
@@ -107,20 +108,27 @@ if ($Game) {
             Write-Host (L "  compiler: dump\_setup\$($kitLlvm.Name) moved to deps\llvm" "  compilateur : dump\_setup\$($kitLlvm.Name) déplacé dans deps\llvm")
         }
     }
+    # Since v0.5.0 the installer is install_opensmash.ps1; install_windowsmash.ps1 only forwards to it (older
+    # OpenSmash.exe start it by that name).
     $installer = Join-Path $Game 'tools\install_windowsmash.ps1'
-    if (-not (Select-String -LiteralPath $installer -Pattern 'function Get-UpdateRef' -SimpleMatch -Quiet)) {
-        $new = "$installer.new"
-        try { Get-Text "https://raw.githubusercontent.com/$Repo/$([uri]::EscapeDataString($Tag))/tools/install_windowsmash.ps1" $new } catch {
+    $setup = Join-Path $Game 'tools\install_opensmash.ps1'
+    $current = if (Test-Path -LiteralPath $setup) { $setup } else { $installer }
+    if (-not (Select-String -LiteralPath $current -Pattern 'function Get-UpdateRef' -SimpleMatch -Quiet)) {
+        $raw = "https://raw.githubusercontent.com/$Repo/$([uri]::EscapeDataString($Tag))/tools"
+        try { Get-Text "$raw/install_windowsmash.ps1" "$installer.new"; Get-Text "$raw/install_opensmash.ps1" "$setup.new" } catch {
+            Remove-Item -LiteralPath "$installer.new", "$setup.new" -Force -ErrorAction SilentlyContinue
             Fail "Could not download the $Tag installer ($($_.Exception.Message)). Start the launcher again in a moment." `
                  "Impossible de télécharger l'installeur de $Tag ($($_.Exception.Message)). Relance le launcher dans un moment."
         }
-        $text = [IO.File]::ReadAllText($new)
-        if ($text -notmatch '\[switch\]\s*\$UpdateOnly\b' -or -not $text.Contains("`$RepoName = 'OpenSmash-Ultimate'") -or -not $text.Contains('function Get-UpdateRef')) {
-            Remove-Item -LiteralPath $new -Force
+        $forward = [IO.File]::ReadAllText("$installer.new"); $text = [IO.File]::ReadAllText("$setup.new")
+        if (-not $forward.Contains("`$RepoName = 'OpenSmash-Ultimate'") -or -not $forward.Contains('install_opensmash.ps1') -or
+            $text -notmatch '\[switch\]\s*\$UpdateOnly\b' -or -not $text.Contains("`$RepoName = 'OpenSmash-Ultimate'") -or -not $text.Contains('function Get-UpdateRef')) {
+            Remove-Item -LiteralPath "$installer.new", "$setup.new" -Force
             Fail 'The installer GitHub sent is not the one expected; nothing was changed.' `
                  "L'installeur envoyé par GitHub n'est pas celui attendu ; rien n'a été changé."
         }
-        Move-Item -LiteralPath $new -Destination $installer -Force
+        Move-Item -LiteralPath "$setup.new" -Destination $setup -Force
+        Move-Item -LiteralPath "$installer.new" -Destination $installer -Force
         Write-Host (L "  installer: $Tag's (updates follow the releases)" "  installeur : celui de $Tag (les mises à jour suivent les versions publiées)")
     }
 }
