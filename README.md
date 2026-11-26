@@ -103,7 +103,7 @@ Windows, le nom du PC et les adresses IP publiques sont masqués dans le rapport
 - `kit/nilsix/LauncherForm.Nilsix.cs` : la page NILSIX TOOLS, dessinée avec les mêmes fonctions que les autres pages,
   et ses mises à jour (la vérification au démarrage, `NilsixReplaceLauncherAsync`). `NILSIX_KIT_URL` (par exemple
   `file:///D:/WindowSmashLauncher/kit/`) remplace GitHub pour les tests.
-- `kit/mods_sync.py` : `make` écrit le fichier .bat, qui contient ce script et la liste des mods. Chez l'ami, `sync`
+- `kit/mods_sync.py` : `make` écrit le fichier .bat, qui contient ce script et la liste des mods. Sur l'autre PC, `sync`
   fait la synchro puis la vérifie (`check` vérifie seulement). Le code est calculé sur la liste de mods que le jeu
   échange en ligne (`runtime/net_relay.c`) ; la vérification compare aussi l'ordre des mods et les plugins. Les étapes
   de `make` vont dans la barre en bas d'OpenSmash (lignes `PROGRESS <0 à 1, ou -1> <texte>`, `SetLoad`).

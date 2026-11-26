@@ -192,13 +192,13 @@ def make(root, out):
     manual = [n for n, e in unique.items() if not (e.get("gamebanana") and e.get("file_id"))]
     if manual:
         say(L(f"Not from GameBanana (your friend needs these folders from you, mods\\<name>): {', '.join(manual)}",
-              f"Pas de GameBanana (ton ami doit recevoir ces dossiers de toi, mods\\<nom>) : {', '.join(manual)}"))
+              f"Pas de GameBanana (ces dossiers sont à envoyer toi-même, mods\\<nom>) :{', '.join(manual)}"))
     step(L("LOOKING FOR CONFLICTS", "RECHERCHE DES CONFLITS"))
     found = real_conflicts(mods, tree)
     say(L(f"Conflicts: {len(found)} file(s) changed by more than one turned-on mod (the later one in the order wins; "
           "your friend gets the same order)",
           f"Conflits : {len(found)} fichier(s) modifiés par plusieurs mods activés (le dernier dans l'ordre gagne ; "
-          "ton ami aura le même ordre)"))
+          "le fichier donne le même ordre)"))
     for c in found[:5]:
         say(f"  {c['path']}: {' > '.join(c['mods'])}")
     say(L("Checking GameBanana for newer files...", "Recherche de versions plus récentes sur GameBanana..."))
@@ -217,7 +217,7 @@ def make(root, out):
         ups = list({(u.get("title"), u.get("installed"), u.get("newest")): u for u in mods.updates(tree)}.values())   # (a pack's mods: one line)
         if ups:
             say(L(f"{len(ups)} mod(s) have a newer file on GameBanana; your friend gets YOUR version:",
-                  f"{len(ups)} mod(s) ont une version plus récente sur GameBanana ; ton ami reçoit TA version :"))
+                  f"{len(ups)} mod(s) ont une version plus récente sur GameBanana ; le fichier donne TA version :"))
             for u in ups:
                 say(f"  {u.get('title') or u['name']}: {u.get('installed', '')} -> {u.get('newest', '')}")
             say(L("(the newest for both of you: update them in OpenSmash > Mods, then make this file again)",
