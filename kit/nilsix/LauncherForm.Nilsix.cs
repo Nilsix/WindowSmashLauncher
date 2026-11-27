@@ -416,6 +416,85 @@ namespace OpenSmash.Launcher
             if (!box.Visible) box.Visible = true;
         }
 
+        // ---- Play's MOD ONLY mode: the select screen with the turned-on mods' characters only (kit 5.12) ----
+        // Five hooks (kit\nilsix_launcher.ps1, all or none): the < > modes are PLAY, MOD ONLY and VANILLA, the button says
+        // MOD ONLY (the header's is made wide enough), build\launch_mode.txt keeps it (NilsixLoadModOnly), and Play runs
+        // mods_sync.py modonly once OpenSmash has applied the mods. That takes the game's fighters off the select screen
+        // in mods\.characters' ui_chara_db.prc, but those a mod gives new moves, and writes dump\mods\nilsix_modonly.json:
+        // the next start in another mode applies the mods again (NilsixModOnlyUndo), which makes the file as it was.
+        // Online, the game reports the same set (it hashes no dot folder), and a player on PLAY can still pick anyone.
+        string NilsixModOnlyMark => Path.Combine(_repo, "dump", "mods", "nilsix_modonly.json");
+
+        void NilsixLoadModOnly()   // (LoadLaunchMode knows "vanilla" only)
+        {
+            try
+            {
+                if (File.ReadAllText(Path.Combine(_buildDir, "launch_mode.txt")).Trim().Equals("modonly", StringComparison.OrdinalIgnoreCase))
+                    _launchMode = "modonly";
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+
+        void NilsixModOnlyUndo()   // (before PrepareModsForLaunch, which applies the mods when they are not "modded")
+        {
+            if (_launchMode != "modonly" && File.Exists(NilsixModOnlyMark)) _modsModded = false;
+        }
+
+        async Task<bool> NilsixModOnly()   // (after PrepareModsForLaunch; false, said in a message: the game does not start)
+        {
+            if (_launchMode != "modonly")
+            {
+                try { File.Delete(NilsixModOnlyMark); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+                return true;
+            }
+            SetLoad("MOD ONLY", -1);
+            try
+            {
+                var (code, text) = await Task.Run(() => NilsixScriptRun("modonly"));
+                if (code == 0) return true;
+                UiLocale.Message(text.Length > 0 ? text : NT($"MOD ONLY could not be made (code {code}).", $"MOD ONLY n'a pas pu être fait (code {code})."), "MOD ONLY");
+                return false;
+            }
+            finally { ClearLoad(); }
+        }
+
+        // mods_sync.py (embedded, Nilsix.mods_sync.py) with the folder's Python; its output for the caller to read
+        ProcessStartInfo NilsixScript(string[] args)
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "opensmash-nilsix");
+            Directory.CreateDirectory(dir);
+            string script = Path.Combine(dir, "mods_sync.py");
+            using (var res = typeof(LauncherForm).Assembly.GetManifestResourceStream("Nilsix.mods_sync.py")
+                             ?? throw new InvalidOperationException("mods_sync.py is not in this launcher"))
+            using (var f = File.Create(script))
+                res.CopyTo(f);
+            var psi = new ProcessStartInfo(ModManagerProcess.FindPython(_repo, _buildDir))
+            {
+                UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = _repo,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+            };
+            foreach (string a in new[] { "-I", "-X", "utf8", script }.Concat(args).Concat(new[] { "--tree", _repo, "--lang", NilsixFr ? "fr" : "en" }))
+                psi.ArgumentList.Add(a);
+            return psi;
+        }
+
+        (int Code, string Text) NilsixScriptRun(params string[] args)   // (run to its end; the end of what it said)
+        {
+            try
+            {
+                using var p = Process.Start(NilsixScript(args)) ?? throw new InvalidOperationException("Python did not start");
+                var err = p.StandardError.ReadToEndAsync();
+                string text = (p.StandardOutput.ReadToEnd() + err.Result).Trim();
+                p.WaitForExit();
+                return (p.ExitCode, text.Length > 1200 ? text.Substring(text.Length - 1200) : text);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                return (-1, NT("Could not start the tool: ", "Impossible de lancer l'outil : ") + e.Message);
+            }
+        }
+
         // mods_sync.py's folders in the OpenSmash folder, named in either language
         IEnumerable<string> NilsixDirs(bool fuse) =>
             (fuse ? new[] { "Fusion mods", "Mods fusion" } : new[] { "Synchro mods", "Mods sync" }).Select(n => Path.Combine(_repo, n)).Where(Directory.Exists);
@@ -447,23 +526,7 @@ namespace OpenSmash.Launcher
             SetLoad(fuse ? NT("MAKING THE FUSION FILE", "CRÉATION DU FICHIER DE FUSION") : NT("MAKING THE FILE", "CRÉATION DU FICHIER"), -1);   // (the bar at the bottom; mods_sync.py's steps then)
             try
             {
-                string dir = Path.Combine(Path.GetTempPath(), "opensmash-nilsix");
-                Directory.CreateDirectory(dir);
-                string script = Path.Combine(dir, "mods_sync.py");
-                using (var res = typeof(LauncherForm).Assembly.GetManifestResourceStream("Nilsix.mods_sync.py")
-                                 ?? throw new InvalidOperationException("mods_sync.py is not in this launcher"))
-                using (var f = File.Create(script))
-                    res.CopyTo(f);
-                var psi = new ProcessStartInfo(ModManagerProcess.FindPython(_repo, _buildDir))
-                {
-                    UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = _repo,
-                    RedirectStandardOutput = true, RedirectStandardError = true,
-                    StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
-                };
-                foreach (string a in new[] { "-I", "-X", "utf8", script, "make", "--tree", _repo, "--lang", NilsixFr ? "fr" : "en" })
-                    psi.ArgumentList.Add(a);
-                if (fuse) psi.ArgumentList.Add("--fuse");
-                var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
+                var p = new Process { StartInfo = NilsixScript(fuse ? new[] { "make", "--fuse" } : new[] { "make" }), EnableRaisingEvents = true };
                 p.OutputDataReceived += (_, e) => NilsixLine(e.Data);
                 p.ErrorDataReceived += (_, e) => NilsixLine(e.Data);
                 p.Exited += (_, _) =>

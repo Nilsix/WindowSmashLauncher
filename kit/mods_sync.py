@@ -7,6 +7,8 @@
     mods_sync.py sync  --tree <game folder> --manifest <json>  (run by that .bat) this folder's mods made the sender's
                        [--out <folder>]                        (a fusion: the file to send back goes there)
     mods_sync.py check --tree <game folder> --manifest <json>  only say whether they are the same
+    mods_sync.py modonly --tree <game folder>                 (OpenSmash's Play set to MOD ONLY) the select screen with
+                                                               the turned-on mods' characters only (mod_only)
 (--out: the game folder when not given; each kind of file in its own folder there, named in English "Mods sync" and
 "Mods fusion". --show: the file written is then shown selected in an Explorer window.)
 
@@ -934,10 +936,151 @@ def report(tree, man, mods, os_mods, problems=(), fuse=False):
     return 1
 
 
+# ---- MOD ONLY: the select screen with the modded characters only (kit 5.12) -----------------------------------------
+CHARA_DB = ("ui", "param", "database", "ui_chara_db.prc")
+MOD_ONLY = "nilsix_modonly.json"   # (dump/mods: OpenSmash's next start in another mode applies the mods again first)
+# the game's fighters whose tile has another name (ui_chara_<name>: Ice Climbers, Pokemon Trainer), and Pyra/Mythra,
+# whose tile is two rows (fighter_kind eflame and elight)
+TILE_OF = {"popo": "ice_climber", "nana": "ice_climber", "pzenigame": "ptrainer", "pfushigisou": "ptrainer",
+           "plizardon": "ptrainer"}
+PAIR = ("eflame", "elight", "element")
+MIIS = ("miifighter", "miiswordsman", "miigunner")
+
+
+def has_bytes(path, needle):
+    try:
+        with open(path, "rb") as f:
+            return needle in f.read()
+    except OSError:
+        return False
+
+
+def new_moves(mods, tree, on):
+    """the game's fighters (fighter/<name>) that turned-on mods give new moves: those a mod with a plugin has files for,
+    when that mod adds no character of its own (none through the CSK Collection, add_chara_db_entry_info, and no
+    ui_chara_db file). A moveset on the fighter's new costumes counts too: its tile is the only way to it. Not a skin
+    (no plugin), Kirby's copy hats, nor fighter/common."""
+    kinds = set()
+    for name in on:
+        folder = os.path.join(tree.mods, name)
+        plugs = mods.plugins(folder)
+        roots = mods.find_roots(folder) or [folder]
+        if not plugs or any(has_bytes(os.path.join(folder, p), b"add_chara_db_entry_info") for p in plugs) or any(
+                os.path.isfile(os.path.join(r, *CHARA_DB[:-1], "ui_chara_db" + x)) for r in roots for x in (".prc", ".prcx", ".prcxml")):
+            continue
+        for r in roots:
+            base = os.path.join(r, "fighter")
+            for dp, _dirs, files in os.walk(base):
+                parts = os.path.relpath(dp, base).replace(os.sep, "/").lower().split("/")
+                if files and parts[0] not in (".", "common") and not (parts[0] == "kirby" and any(p.startswith("copy_") for p in parts)):
+                    kinds.add(parts[0])
+    return kinds
+
+
+def mod_only(root):
+    """MOD ONLY (OpenSmash's Play in that mode, LauncherForm.Nilsix.cs): the game's fighters off the select screen
+    (disp_order -1) but Random and those new_moves finds; the mods' new characters stay. Written over the
+    ui_chara_db.prc of mods/.characters, which ARCropolis loads last (made from the game's own, or a mod's whole copy,
+    when the mods made none). The next apply makes it as it was: a mod turned on or off, or a start in another mode.
+    0: done; 3: not done, said why."""
+    mods, os_mods, _std = tools(root)
+    import prc
+    tree = mods.Tree(root)
+    if not os.path.exists(os.path.join(root, "skyline", "plugins", "libarcropolis.nro")):
+        say(L("MOD ONLY needs ARCropolis, one of OpenSmash's standard plugins: it is not in skyline\\plugins.",
+              "MOD ONLY a besoin d'ARCropolis, un des plugins standard d'OpenSmash : il n'est pas dans skyline\\plugins."))
+        return 3
+    state = tree.load()
+    on = [n for n in state["order"] if state["mods"].get(n, {}).get("enabled")]
+    listed_path = os.path.join(root, "dump", "skyline", "mods.txt")
+    listed = [l.strip() for l in open(listed_path, encoding="utf-8")] if os.path.exists(listed_path) else []
+    pending = os.path.join(tree.work, "apply_pending")
+    if os.path.exists(pending) or (on and not [l for l in listed if l and l != mods.CHARACTERS]):
+        # (the game's settings changed the mods, and its start would apply them over this; or none is applied yet)
+        os_mods.normalize_picks(tree)
+        mods.apply(tree, lambda t: say("  " + str(t)))
+        if os.path.exists(pending):
+            os.remove(pending)
+        state = tree.load()
+        on = [n for n in state["order"] if state["mods"].get(n, {}).get("enabled")]
+    image = mods.RomfsImage(tree.vanilla_cfg)
+    try:
+        arc_at = next(o for p, o, _s in mods.romfs_entries(image) if p == "data.arc")
+        table = mods.Table(mods.Arc(lambda off, n: image.read(arc_at + off, n)))
+        game = table.original(*table.file_targets("/".join(CHARA_DB))[0])
+    finally:
+        mods.close_image(image)
+    out = os.path.join(tree.mods, mods.CHARACTERS, *CHARA_DB)
+    base, hide = game, []
+    if os.path.isfile(out):   # (mods.characters_mod's: with the plugins' characters)
+        with open(out, "rb") as f:
+            base = f.read()
+    else:
+        for name in on:   # (as characters_mod: a mod's whole copy, the last one, which ARCropolis is then told to leave)
+            for r in mods.find_roots(os.path.join(tree.mods, name)) or [os.path.join(tree.mods, name)]:
+                own = os.path.join(r, *CHARA_DB)
+                if os.path.isfile(own):
+                    with open(own, "rb") as f:
+                        base = f.read()
+                    hide.append(os.path.relpath(own, tree.mods).replace(os.sep, "/"))
+    H = prc.hash40
+    ID, KIND, DISP = H("ui_chara_id"), H("fighter_kind"), H("disp_order")
+    rows = lambda db: dict(db[1])[H("db_root")][1]
+    games = {dict(st).get(ID, (None, None))[1] for _k, st in rows(prc.read(game))}
+    kinds = new_moves(mods, tree, on)
+    keep = {H("ui_chara_random")} | {H("ui_chara_" + TILE_OF.get(k, k)) for k in kinds}
+    if kinds & set(MIIS):
+        keep.add(H("ui_chara_miiall"))   # (the Miis' own row)
+    fighters = {H("fighter_kind_" + k) for k in kinds | (set(PAIR[:2]) if kinds & set(PAIR) else set())}
+    db = prc.read(base)
+    new = kept = hidden = 0
+    for _k, fields in rows(db):
+        f = dict(fields)
+        if DISP not in f or f[DISP][1] < 0:   # (not on the select screen)
+            continue
+        uid = f.get(ID, (None, None))[1]
+        if uid not in games:
+            new += 1
+        elif uid in keep or f.get(KIND, (None, None))[1] in fighters:
+            kept += uid != H("ui_chara_random")
+        else:
+            i = next(i for i, (k, _v) in enumerate(fields) if k == DISP)
+            fields[i] = (DISP, (fields[i][1][0], -1))
+            hidden += 1
+    patched = any(os.path.isfile(os.path.join(r, *CHARA_DB[:-1], "ui_chara_db" + x))   # (characters a .prcxml adds)
+                  for n in on for r in mods.find_roots(os.path.join(tree.mods, n)) for x in (".prcx", ".prcxml"))
+    if not new and not kept and not patched:
+        say(L("MOD ONLY: no turned-on mod adds a character or gives a fighter new moves, so the select screen would be "
+              "empty. Turn on a moveset in MODS, or pick PLAY with the arrows beside the button.",
+              "MOD ONLY : aucun mod activé n'ajoute de perso ni ne donne de nouveaux coups à un combattant, donc l'écran "
+              "de sélection serait vide. Active un moveset dans MODS, ou choisis JOUER avec les flèches à côté du bouton."))
+        return 3
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "wb") as f:
+        f.write(prc.write(db))
+    hidden_path = os.path.join(root, "dump", "skyline", "hidden.txt")
+    for path, add in ((hidden_path, hide), (listed_path, [mods.CHARACTERS])):   # (mods.txt: .characters, last, as sync_plugins)
+        have = [l.strip() for l in open(path, encoding="utf-8")] if os.path.exists(path) else []
+        more = [a for a in add if a not in have]
+        if more:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.writelines(l + "\n" for l in [l for l in have if l] + more)
+    os.makedirs(tree.work, exist_ok=True)
+    with open(os.path.join(tree.work, MOD_ONLY), "w", encoding="utf-8") as f:
+        json.dump({"made": datetime.datetime.now().isoformat(timespec="seconds"), "new": new, "fighters": sorted(kinds),
+                   "hidden": hidden}, f)
+    say(L(f"MOD ONLY: {new} new character(s) and {kept} fighter(s) with new moves on the select screen, {hidden} of the "
+          f"game's off it.",
+          f"MOD ONLY : {new} nouveau(x) perso(s) et {kept} combattant(s) aux nouveaux coups sur l'écran de sélection, "
+          f"{hidden} du jeu enlevés."))
+    return 0
+
+
 def main(argv):
     global FR, BAR, SHOW
     ap = argparse.ArgumentParser(description="OpenSmash mods sync (Nilsix tools)")
-    ap.add_argument("command", choices=("make", "sync", "check"))
+    ap.add_argument("command", choices=("make", "sync", "check", "modonly"))
     ap.add_argument("--tree", required=True)
     ap.add_argument("--out", default="")
     ap.add_argument("--manifest", default="")
@@ -956,6 +1099,8 @@ def main(argv):
     try:
         if a.command == "make":
             return make(root, out, a.fuse)
+        if a.command == "modonly":
+            return mod_only(root)
         with open(a.manifest, encoding="utf-8-sig") as f:
             man = json.load(f)
         if not isinstance(man, dict) or man.get("format") != FORMAT or man.get("sync") != SYNC:

@@ -82,6 +82,13 @@ function Test-NilsixHook([string]$File, [string]$Anchor, [int]$Count) {
     [regex]::Matches([IO.File]::ReadAllText($File), [regex]::Escape($Anchor)).Count -eq $Count
 }
 
+function Add-NilsixHooks([object[]]$Hooks, [string]$En, [string]$Fr) {
+    # hooks that go in all together or not at all, each @(file, anchor, replacement, count): when a release changed one
+    # of them, none goes in and the console says so ($En / $Fr), and the rest of NILSIX TOOLS still works
+    if (@($Hooks | Where-Object { -not (Test-NilsixHook $_[0] $_[1] $_[3]) }).Count) { Write-Host (L $En $Fr); return }
+    foreach ($h in $Hooks) { Add-NilsixHook $h[0] $h[1] $h[2] $h[3] }
+}
+
 function Add-NilsixPage([string]$Ui, [string]$KitDir) {
     # the release's launcher sources in $Ui (its OpenSmash.Launcher folder) with the NILSIX TOOLS page: the hooks into
     # its files, then LauncherForm.Nilsix.cs and mods_sync.py (embedded) beside them
@@ -103,16 +110,25 @@ function Add-NilsixPage([string]$Ui, [string]$KitDir) {
         'await NilsixReplaceLauncherAsync(_release, atRoot);' 1
     Add-NilsixHook (Join-Path $Ui 'OpenSmash.Launcher.csproj') '<EmbeddedResource Include="Assets\emblem-white.png" LogicalName="emblem.png" />' `
         '<EmbeddedResource Include="Assets\emblem-white.png" LogicalName="emblem.png" /><EmbeddedResource Include="Nilsix\mods_sync.py" LogicalName="Nilsix.mods_sync.py" />' 1
-    # (kit 5.11, the MODS page's search and ALL / ON / OFF filter: its three hooks or none, so that a change of that page
-    # upstream leaves the rest of NILSIX TOOLS working)
-    $search = @(
-        @((Join-Path $Ui 'LauncherForm.cs'), 'var lines = new List<ModLine>();', 'var lines = new List<ModLine>(); var _mods = NilsixModsShown();'),
+    # (kit 5.11, the MODS page's search and ALL / ON / OFF filter: its three hooks or none)
+    Add-NilsixHooks @(
+        @((Join-Path $Ui 'LauncherForm.cs'), 'var lines = new List<ModLine>();', 'var lines = new List<ModLine>(); var _mods = NilsixModsShown();', 1),
         @((Join-Path $Ui 'LauncherForm.Paint.cs'), 'Theme.Label(g, $"INSTALLED  ({packages})", hf, A(Theme.Dim), x, top - 26 * s, 20 * s, sp);',
-          'Theme.Label(g, NilsixInstalled(packages), hf, A(Theme.Dim), x, top - 26 * s, 20 * s, sp); PaintNilsixModSearch(g, x, top, cw, sizeR);'),
-        @((Join-Path $Ui 'LauncherForm.Paint.cs'), 'PaintHeader(g, W, H);', 'NilsixSearchPlace(); PaintHeader(g, W, H);'))
-    if (@($search | Where-Object { -not (Test-NilsixHook $_[0] $_[1] 1) }).Count) {
-        Write-Host (L '  Nilsix tools: the MODS page changed in this release, so no search on it' '  Nilsix tools : la page MODS a changé dans cette version, donc pas de recherche dessus')
-    } else { foreach ($h in $search) { Add-NilsixHook $h[0] $h[1] $h[2] 1 } }
+          'Theme.Label(g, NilsixInstalled(packages), hf, A(Theme.Dim), x, top - 26 * s, 20 * s, sp); PaintNilsixModSearch(g, x, top, cw, sizeR);', 1),
+        @((Join-Path $Ui 'LauncherForm.Paint.cs'), 'PaintHeader(g, W, H);', 'NilsixSearchPlace(); PaintHeader(g, W, H);', 1)) `
+        '  Nilsix tools: the MODS page changed in this release, so no search on it' '  Nilsix tools : la page MODS a changé dans cette version, donc pas de recherche dessus'
+    # (kit 5.12, Play's MOD ONLY mode: the modes, launch_mode.txt read back, Play's step after the mods are applied, the
+    # label on both Play buttons and the header button's width)
+    Add-NilsixHooks @(
+        @((Join-Path $Ui 'LauncherForm.cs'), 'string[] modes = { "mods", "vanilla" };', 'string[] modes = { "mods", "modonly", "vanilla" };', 1),
+        @((Join-Path $Ui 'LauncherForm.cs'), 'LoadLaunchMode();', 'LoadLaunchMode(); NilsixLoadModOnly();', 1),
+        @((Join-Path $Ui 'LauncherForm.cs'), 'if (!await PrepareModsForLaunch()) return;',
+          'NilsixModOnlyUndo(); if (!await PrepareModsForLaunch() || !await NilsixModOnly()) return;', 1),
+        @((Join-Path $Ui 'LauncherForm.Paint.cs'), 'string playLabel = _launchMode == "vanilla" ? "VANILLA" : "PLAY";',
+          'string playLabel = _launchMode == "vanilla" ? "VANILLA" : _launchMode == "modonly" ? "MOD ONLY" : "PLAY";', 2),
+        @((Join-Path $Ui 'LauncherForm.Paint.cs'), 'float labelW = Math.Max(Theme.TextWidth(g, "PLAY", cf, csp), Theme.TextWidth(g, "VANILLA", cf, csp));',
+          'float labelW = Math.Max(Math.Max(Theme.TextWidth(g, "PLAY", cf, csp), Theme.TextWidth(g, "VANILLA", cf, csp)), Theme.TextWidth(g, "MOD ONLY", cf, csp));', 1)) `
+        '  Nilsix tools: the Play button changed in this release, so no MOD ONLY' '  Nilsix tools : le bouton Jouer a changé dans cette version, donc pas de MOD ONLY'
     Copy-Item -LiteralPath (Join-Path $KitDir 'nilsix\LauncherForm.Nilsix.cs') -Destination $Ui
     New-Item -ItemType Directory -Force -Path (Join-Path $Ui 'Nilsix') | Out-Null
     Copy-Item -LiteralPath (Join-Path $KitDir 'mods_sync.py') -Destination (Join-Path $Ui 'Nilsix')

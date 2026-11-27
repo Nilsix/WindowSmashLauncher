@@ -101,6 +101,25 @@ au-dessus de la liste des mods installés, dans la page MODS :
 - **Ctrl+F** met le curseur dans la recherche. **Échap** l'efface, puis rend les touches à la page, comme Entrée et
   Flèche bas. Pendant que tu écris, Suppr efface une lettre, jamais un mod.
 
+### MOD ONLY : seulement les persos moddés
+
+Les flèches **<** et **>** à côté du bouton Jouer passent de **JOUER** à **MOD ONLY** puis à **VANILLA**. Le mode
+choisi est gardé pour la fois suivante.
+
+MOD ONLY lance le jeu avec tes mods activés, mais l'écran de sélection ne montre que :
+
+- les nouveaux persos (ceux qu'ajoute The CSK Collection, ou un mod qui apporte sa propre liste de persos) ;
+- les persos du jeu dont un mod activé change les coups avec un plugin (un moveset, par exemple Sonic Re-Imagined) ;
+- Aléatoire.
+
+Un skin seul (sans plugin) ne compte pas, ni le perso dont un nouveau perso prend les slots en plus (Captain Falcon
+pour Vegito). Si aucun mod activé n'ajoute de perso ni de moveset, le jeu ne se lance pas et un message le dit.
+
+- Le JOUER ou VANILLA suivant remet tous les persos (la barre APPLYING MODS s'affiche une fois).
+- Changer de mods dans le menu du jeu remet tous les persos au redémarrage du jeu. Le raccourci qui lance le jeu
+  directement (sans le launcher) garde l'écran du dernier lancement.
+- En ligne, rien ne change : la liste de mods échangée et le code de synchro sont les mêmes qu'avec JOUER.
+
 ### Les mises à jour
 
 Avec NILSIX TOOLS, ce launcher ne sert qu'à installer : ensuite, ses raccourcis (Bureau, menu Démarrer) ouvrent
@@ -147,7 +166,9 @@ Windows, le nom du PC et les adresses IP publiques sont masqués dans le rapport
   commit de la version publiée (téléchargée sur GitHub). Il ajoute 8 points d'accroche dans `OpenSmash.Launcher` ; si
   l'un d'eux a changé en amont, rien n'est compilé et l'OpenSmash.exe publié est mis à la place. Trois autres
   accrochent la recherche de la page MODS (`BuildModLines`, la ligne INSTALLED, `PaintHeader`) : si l'un d'eux a
-  changé, aucun des trois n'est mis, et le launcher est compilé sans la recherche.
+  changé, aucun des trois n'est mis, et le launcher est compilé sans la recherche. Cinq autres font MOD ONLY (les
+  modes de `CycleLaunchMode`, `LoadLaunchMode`, l'appel de `PrepareModsForLaunch` dans Play, le texte des deux boutons
+  Jouer, la largeur de celui de l'en-tête) : même règle, tous ou aucun.
   `%LOCALAPPDATA%\WindowSmash-setup\nilsix-launcher\record.json` évite de recompiler quand rien n'a changé.
   OpenSmash.exe le lance aussi comme script, avec les fichiers du kit téléchargés sur GitHub : à chaque démarrage, et à
   la place de sa propre mise à jour (`nilsix_launcher.ps1 <dossier> [<version> <commit>]` ; code de sortie 0 = déjà
@@ -168,7 +189,10 @@ Windows, le nom du PC et les adresses IP publiques sont masqués dans le rapport
   `Mods sync`, `Mods fusion`) ; sans `--out`, dans le dossier OpenSmash (`--tree`). `--show` affiche le fichier écrit
   dans l'Explorateur (le .bat le passe à `sync`). Le .bat ferme OpenSmash comme sa croix (`CloseMainWindow`), et refuse
   si le jeu tourne. Après avoir appliqué les mods, `sync` fait les étapes de `os_mods.py refresh` (`refresh_plugins`)
-  quand `skyline.plugin_refresh_reason` en donne une raison.
+  quand `skyline.plugin_refresh_reason` en donne une raison. `modonly` (MOD ONLY, lancé par Play après l'apply)
+  réécrit `mods/.characters/ui/param/database/ui_chara_db.prc` : les persos du jeu qui ne sont ni Aléatoire ni le
+  combattant d'un moveset passent à `disp_order` -1. Il écrit `dump/mods/nilsix_modonly.json`, qui fait refaire l'apply
+  au lancement suivant dans un autre mode (`NilsixModOnlyUndo`). Code de sortie 3 : rien à montrer, la raison affichée.
 - `Diagnostic OpenSmash.bat` : le diagnostic, un script PowerShell entre `#@@BEGIN diag.ps1` et `#@@END diag.ps1`
   (CRLF, en-tête ASCII). `OPENSMASH_DIAG_OUT` change le fichier écrit, `OPENSMASH_DIAG_QUIET=1` n'ouvre pas
   l'Explorateur.
