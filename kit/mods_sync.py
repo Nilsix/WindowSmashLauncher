@@ -1081,6 +1081,19 @@ def mod_only(root):
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "wb") as f:
         f.write(prc.write(db))
+    # The real CSK Collection makes the select screen's database itself, from the game's own rows plus its entries
+    # (its dump, dump/skyline/sd/chara.prc, had every fighter back on, 2026-11-27): the same rows off again as
+    # entries of its JSON database (mods:/database/*.json, which it reads at start), each changing a game row.
+    # (the game's select-screen rows off in this file: also those an earlier MOD ONLY took off, the base being its file)
+    on_screen = {dict(st).get(ID, (None, None))[1] for _k, st in rows(prc.read(game)) if dict(st).get(DISP, (0, -1))[1] >= 0}
+    off = [u for u in (dict(st).get(ID, (None, None))[1] for _k, st in rows(db) if dict(st).get(DISP, (0, 0))[1] < 0)
+           if u in on_screen]
+    hidden = len(off)
+    csk_db = os.path.join(tree.mods, mods.CHARACTERS, "database", "nilsix_modonly.json")
+    os.makedirs(os.path.dirname(csk_db), exist_ok=True)
+    with open(csk_db, "w", encoding="utf-8", newline="\n") as f:
+        json.dump({"character_database_entries": [{"ui_chara_id": f"{u:#x}", "disp_order": -1, "can_select": False}
+                                                  for u in off]}, f, indent=1)
     hidden_path = os.path.join(root, "dump", "skyline", "hidden.txt")
     for path, add in ((hidden_path, hide), (listed_path, [mods.CHARACTERS])):   # (mods.txt: .characters, last, as sync_plugins)
         have = [l.strip() for l in open(path, encoding="utf-8")] if os.path.exists(path) else []
