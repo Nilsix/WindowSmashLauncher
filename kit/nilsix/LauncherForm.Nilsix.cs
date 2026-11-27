@@ -84,8 +84,10 @@ namespace OpenSmash.Launcher
         // or setting being answered, no sign-in; the window shown (minimized, it waits: no window popping up over a game)
         bool NilsixIdle => Visible && WindowState != System.Windows.Forms.FormWindowState.Minimized && !Busy && !_waitingForGame
             && !NilsixRuns(_gameProcess) && !NilsixRuns(_shaderProc) && !NilsixRuns(_maintenanceProcess) && _nilsixProc == null
-            && _prepInflight is not { IsCompleted: false } && _editingKey == null && !_accountBusy && !_discordBusy
-            && !(_newModsPrompt || _updatePrompt || _shaderPrompt || _pluginPrompt || _rebuildPrompt || _sharePrompt || _checkModsPrompt || _showSetupPrompt);
+            && _prepInflight is not { IsCompleted: false } && _editingKey == null && !_accountBusy && !_discordBusy && !NilsixPrompt;
+
+        // a question painted over the page (OnPaint's last ones)
+        bool NilsixPrompt => _newModsPrompt || _updatePrompt || _shaderPrompt || _pluginPrompt || _rebuildPrompt || _sharePrompt || _checkModsPrompt || _showSetupPrompt;
 
         static bool NilsixRuns(Process? p)
         {
@@ -220,8 +222,198 @@ namespace OpenSmash.Launcher
                 case "nilsix:sync-fuse": NilsixMakeSync(true); return true;
                 case "nilsix:sync-open": NilsixShow(NilsixNewest(false)); return true;
                 case "nilsix:fuse-open": NilsixShow(NilsixNewest(true)); return true;
+                case "nilsix:modsearch": if (_nilsixSearch is { Visible: true } box) { box.Focus(); box.SelectAll(); } return true;
+                case "nilsix:modsearch-clear": _nilsixSearch?.Clear(); return true;
+                case "nilsix:modfilter:0": NilsixModFilter(0); return true;
+                case "nilsix:modfilter:1": NilsixModFilter(1); return true;
+                case "nilsix:modfilter:2": NilsixModFilter(2); return true;
             }
             return false;
+        }
+
+        // ---- MODS page: a search of the installed mods and an ALL / ON / OFF filter (kit 5.11) ----
+        // Three hooks (kit\nilsix_launcher.ps1, all or none): BuildModLines lists NilsixModsShown() (a local _mods over the
+        // field), the INSTALLED label paints the field and the filter (PaintNilsixModSearch), and each paint puts the text
+        // box over the field or hides it (NilsixSearchPlace). A pack (parts, colors) is shown or hidden whole: its row's
+        // switch and color pick act on all of it, as without a search.
+        System.Windows.Forms.TextBox? _nilsixSearch;
+        bool _nilsixSearchAsked;
+        bool? _nilsixCueFr;
+        string _nilsixModQuery = "";
+        int _nilsixModState, _nilsixModShown;   // (0 all, 1 on, 2 off; the packs shown)
+        RectangleF _nilsixSearchAt;
+        Font? _nilsixSearchFont;
+        string _nilsixSearchFontKey = "";
+        int _nilsixSearchTextH;
+
+        static string NilsixUnit(ModInfo m) => string.IsNullOrEmpty(m.Group) ? "m:" + m.Name : "g:" + m.Group;   // (as PaintMods counts packs)
+
+        List<ModInfo> NilsixModsShown()
+        {
+            if (_nilsixModQuery.Length == 0 && _nilsixModState == 0) return _mods;
+            string[] words = _nilsixModQuery.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            var ci = System.Globalization.CultureInfo.InvariantCulture.CompareInfo;
+            const System.Globalization.CompareOptions loose = System.Globalization.CompareOptions.IgnoreCase | System.Globalization.CompareOptions.IgnoreNonSpace;
+            bool Has(ModInfo p, string w) => new[] { p.Title, p.Name, p.GroupTitle, p.Group, p.Part, p.Variant, p.Author, p.Category, p.About }
+                .Any(t => !string.IsNullOrEmpty(t) && ci.IndexOf(t, w, loose) >= 0);   // (é finds e: accents and case ignored)
+            var keep = new HashSet<string>();
+            foreach (var unit in _mods.GroupBy(NilsixUnit))
+            {
+                var parts = unit.ToArray();
+                int on = parts.Count(p => p.Enabled);
+                bool state = _nilsixModState switch
+                {
+                    1 => on > 0,
+                    2 => parts.Any(p => p.Pick) ? on == 0 : on < parts.Length,   // (a color pack has one color on: off when none is)
+                    _ => true,
+                };
+                if (state && parts.Any(p => words.All(w => Has(p, w)))) keep.Add(unit.Key);
+            }
+            _nilsixModShown = keep.Count;
+            return _mods.Where(m => keep.Contains(NilsixUnit(m))).ToList();
+        }
+
+        string NilsixInstalled(int packages) => _nilsixModQuery.Length == 0 && _nilsixModState == 0
+            ? $"INSTALLED  ({packages})" : $"INSTALLED  ({_nilsixModShown} / {packages})";
+
+        void NilsixModFilter(int state)
+        {
+            if (_nilsixModState == state) return;
+            _nilsixModState = state;
+            NilsixModsRelist();
+        }
+
+        void NilsixModsRelist()
+        {
+            _modScroll = 0;
+            BuildModLines();
+            _sel = Math.Min(_sel, Math.Max(0, ModActionCount + _modLines.Count - 1));
+            Invalidate();
+        }
+
+        // the header row of the list: the field (the text box sits in it), its ×, and ALL / ON / OFF, left of FILES
+        void PaintNilsixModSearch(Graphics g, float x, float top, float cw, float sizeR)
+        {
+            float s = _s, h = 28 * s, y = top - 31 * s, fx = x + 190 * s;
+            if (!_nilsixSearchAsked) { _nilsixSearchAsked = true; BeginInvoke(new Action(NilsixSearchMake)); }   // (made out of the paint)
+            var cf = FM(11 * s, true);
+            float sp = 11 * s * 0.12f, xw = 26 * s, gap = 4 * s;
+            string[] chips = { NT("ALL", "TOUS"), NT("ON", "ACTIVÉS"), NT("OFF", "DÉSACTIVÉS") };
+            float[] widths = chips.Select(c => Theme.TextWidth(g, c, cf, sp) + 26 * s).ToArray();
+            float limit = sizeR - Theme.TextWidth(g, "FILES", FM(11 * s), 11 * s * 0.16f) - 24 * s;
+            float fw = Math.Clamp(limit - fx - xw - 12 * s - widths.Sum() - gap * (chips.Length - 1), 120 * s, 300 * s);
+            bool focused = _nilsixSearch?.Focused == true;
+            float fh = Theme.Ease(Hov("nilsix:modsearch", !focused && _hover == "nilsix:modsearch"));
+            using (var p = Theme.Para(fx, y, fw, h, 8 * s))
+            {
+                using (var b = new SolidBrush(A(Color.FromArgb(18, 18, 20)))) g.FillPath(b, p);   // (the text box's own color)
+                using var pen = new Pen(A(focused ? Theme.Accent : _nilsixModQuery.Length > 0 ? White(150) : Theme.Mix(Theme.Line, White(150), fh)), Math.Max(1, s));
+                g.DrawPath(pen, p);
+            }
+            _nilsixSearchAt = new RectangleF(fx, y, fw, h);
+            AddHit("nilsix:modsearch", fx, y, fw, h);
+            float cx = fx + fw;
+            if (_nilsixModQuery.Length > 0)
+            {
+                float e = Theme.Ease(Hov("nilsix:modsearch-clear", _hover == "nilsix:modsearch-clear")), mx = cx + xw / 2, my = y + h / 2, a = 4.5f * s;
+                using (var pen = new Pen(A(Theme.Mix(Theme.Muted, Theme.Text, e)), Math.Max(1.4f, 1.6f * s)))
+                {
+                    g.DrawLine(pen, mx - a, my - a, mx + a, my + a);
+                    g.DrawLine(pen, mx + a, my - a, mx - a, my + a);
+                }
+                AddHit("nilsix:modsearch-clear", cx, y, xw, h);
+            }
+            float bx = cx + xw + 12 * s;
+            for (int i = 0; i < chips.Length; i++)
+            {
+                string id = "nilsix:modfilter:" + i;
+                bool on = _nilsixModState == i;
+                float e = Theme.Ease(Hov(id, !on && _hover == id));
+                using (var p = Theme.Para(bx, y + 2 * s, widths[i], h - 4 * s, 6 * s))
+                {
+                    if (on) using (var b = new SolidBrush(A(Theme.Text))) g.FillPath(b, p);
+                    else using (var pen = new Pen(A(Theme.Mix(Theme.Line, White(150), e)), Math.Max(1, s))) g.DrawPath(pen, p);
+                }
+                Theme.Label(g, chips[i], cf, A(on ? Theme.Bg : Theme.Mix(Theme.Muted, Theme.Text, e)), bx, y + 2 * s, h - 4 * s, sp, StringAlignment.Center, widths[i]);
+                if (!on) AddHit(id, bx, y, widths[i], h);
+                bx += widths[i] + gap;
+            }
+            if (_modLines.Count == 0 && _mods.Count > 0)
+                Theme.DrawText(g, NT("No installed mod matches.", "Aucun mod installé ne correspond."), FB(15 * s), A(Theme.Muted), x, top + 18 * s, cw, 26 * s, localize: false);
+        }
+
+        void NilsixSearchMake()
+        {
+            if (_nilsixSearch != null || IsDisposed) return;
+            var box = new System.Windows.Forms.TextBox
+            {
+                Visible = false, BorderStyle = System.Windows.Forms.BorderStyle.None, AutoSize = false, MaxLength = 64,
+                BackColor = Color.FromArgb(18, 18, 20), ForeColor = Theme.Text, Cursor = System.Windows.Forms.Cursors.IBeam,
+                TabStop = false,   // (never given the keys by itself: when the window comes back to the front, they stay the page's)
+            };
+            box.TextChanged += (_, _) =>
+            {
+                string q = box.Text.Trim();
+                if (q == _nilsixModQuery) return;
+                _nilsixModQuery = q;
+                NilsixModsRelist();
+            };
+            box.KeyDown += (_, e) =>   // (Esc empties it, then gives the keys back to the page, as Enter and Down do)
+            {
+                if (e.KeyCode == System.Windows.Forms.Keys.Escape && box.TextLength > 0) box.Clear();
+                else if (e.KeyCode is System.Windows.Forms.Keys.Escape or System.Windows.Forms.Keys.Enter or System.Windows.Forms.Keys.Down) ActiveControl = null;
+                else return;
+                e.Handled = e.SuppressKeyPress = true;
+                Invalidate();
+            };
+            box.GotFocus += (_, _) => Invalidate();   // (the field's red edge)
+            box.LostFocus += (_, _) => Invalidate();
+            MouseDown += (_, _) => { if (box.Focused) ActiveControl = null; };   // (a click on the page: its keys again)
+            KeyDown += (_, e) =>   // (Ctrl+F on the MODS page: the field)
+            {
+                if (e.Control && e.KeyCode == System.Windows.Forms.Keys.F && _view == "mods" && box.Visible) { box.Focus(); box.SelectAll(); e.Handled = true; }
+            };
+            Controls.Add(box);
+            _nilsixSearch = box;
+            Invalidate();
+        }
+
+        // after the page's paint, before the header's: the text box in the field on the MODS page, hidden elsewhere and
+        // under a question, the account card or an open color list (a child window would show over them)
+        void NilsixSearchPlace()
+        {
+            var box = _nilsixSearch;
+            if (box == null) return;
+            if (_view != "mods" || NilsixPrompt || _discordOpen || _openDropdownKey?.StartsWith("modpick:", StringComparison.Ordinal) == true || _nilsixSearchAt.Width <= 0)
+            {
+                if (box.Focused) ActiveControl = null;
+                if (box.Visible) box.Visible = false;
+                return;
+            }
+            string fontKey = _s + "|" + UiLocale.Language;
+            if (fontKey != _nilsixSearchFontKey)   // (its own font: the paint's are disposed on a resize or a language change)
+            {
+                _nilsixSearchFontKey = fontKey;
+                var font = Theme.Mono(13 * _s);
+                if (font.Equals(box.Font)) font.Dispose();   // (an equal font is not taken: the box keeps its own)
+                else
+                {
+                    var old = _nilsixSearchFont;
+                    box.Font = _nilsixSearchFont = font;
+                    old?.Dispose();
+                }
+                _nilsixSearchTextH = System.Windows.Forms.TextRenderer.MeasureText("Ag", box.Font, Size.Empty, System.Windows.Forms.TextFormatFlags.NoPadding).Height + 2;
+            }
+            var f = _nilsixSearchAt;
+            int pad = (int)Math.Ceiling(16 * _s), th = _nilsixSearchTextH;   // (inside the slanted edges)
+            var r = new Rectangle((int)(f.X + pad), (int)(f.Y + (f.Height - th) / 2), Math.Max(10, (int)(f.Width - 2 * pad)), th);
+            if (box.Bounds != r) box.Bounds = r;
+            if (_nilsixCueFr != NilsixFr)   // (EM_SETCUEBANNER, shown while it is empty, even with the keys)
+            {
+                _nilsixCueFr = NilsixFr;
+                SendMessageStr(box.Handle, 0x1501, (IntPtr)1, NT("Search your mods", "Rechercher un mod"));
+            }
+            if (!box.Visible) box.Visible = true;
         }
 
         // mods_sync.py's folders in the OpenSmash folder, named in either language

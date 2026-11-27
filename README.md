@@ -86,6 +86,21 @@ toi.
 Un de ses mods qui ne vient pas de GameBanana doit être copié à la main dans ton dossier `mods` : le fichier le
 signale.
 
+### La recherche dans la page MODS
+
+Le launcher compilé avec NILSIX TOOLS ajoute aussi une barre de recherche et un filtre **TOUS / ACTIVÉS / DÉSACTIVÉS**
+au-dessus de la liste des mods installés, dans la page MODS :
+
+- La recherche trouve un mod par son nom, sa partie, sa variante, son auteur, sa catégorie ou sa description. Les
+  majuscules et les accents ne comptent pas (`ecran` trouve « Écran »). Avec plusieurs mots, il faut tous les mots.
+- Un pack (des parties, ou des couleurs au choix) s'affiche en entier dès qu'une de ses parties correspond : son
+  interrupteur agit toujours sur tout le pack.
+- ACTIVÉS montre les mods dont au moins une partie est activée. DÉSACTIVÉS montre ceux dont au moins une partie est
+  désactivée (pour un pack de couleurs, qui n'en active qu'une : quand aucune ne l'est).
+- `INSTALLED (3 / 69)` : 3 mods affichés sur 69.
+- **Ctrl+F** met le curseur dans la recherche. **Échap** l'efface, puis rend les touches à la page, comme Entrée et
+  Flèche bas. Pendant que tu écris, Suppr efface une lettre, jamais un mod.
+
 ### Les mises à jour
 
 Avec NILSIX TOOLS, ce launcher ne sert qu'à installer : ensuite, ses raccourcis (Bureau, menu Démarrer) ouvrent
@@ -130,7 +145,9 @@ Windows, le nom du PC et les adresses IP publiques sont masqués dans le rapport
 - `kit-opensmash/os_setup.ps1` : renvoie vers `kit/ws_setup.ps1` (pour les anciennes amorces OpenSmash).
 - `kit/nilsix_launcher.ps1` : compile OpenSmash.exe avec la page NILSIX TOOLS, à partir de l'archive des sources du
   commit de la version publiée (téléchargée sur GitHub). Il ajoute 8 points d'accroche dans `OpenSmash.Launcher` ; si
-  l'un d'eux a changé en amont, rien n'est compilé et l'OpenSmash.exe publié est mis à la place.
+  l'un d'eux a changé en amont, rien n'est compilé et l'OpenSmash.exe publié est mis à la place. Trois autres
+  accrochent la recherche de la page MODS (`BuildModLines`, la ligne INSTALLED, `PaintHeader`) : si l'un d'eux a
+  changé, aucun des trois n'est mis, et le launcher est compilé sans la recherche.
   `%LOCALAPPDATA%\WindowSmash-setup\nilsix-launcher\record.json` évite de recompiler quand rien n'a changé.
   OpenSmash.exe le lance aussi comme script, avec les fichiers du kit téléchargés sur GitHub : à chaque démarrage, et à
   la place de sa propre mise à jour (`nilsix_launcher.ps1 <dossier> [<version> <commit>]` ; code de sortie 0 = déjà
@@ -138,7 +155,9 @@ Windows, le nom du PC et les adresses IP publiques sont masqués dans le rapport
   du .bat et n'en garde qu'un par dossier (il repasse à chaque démarrage réussi) ; `Restore-NilsixShortcuts` les remet
   comme avant, les supprimés compris (`nilsix-launcher\shortcuts.txt` : une ligne par raccourci, `removed` en 6e champ).
 - `kit/nilsix/LauncherForm.Nilsix.cs` : la page NILSIX TOOLS, dessinée avec les mêmes fonctions que les autres pages,
-  et ses mises à jour (la vérification au démarrage, `NilsixReplaceLauncherAsync`). `NILSIX_KIT_URL` (par exemple
+  ses mises à jour (la vérification au démarrage, `NilsixReplaceLauncherAsync`) et la recherche de la page MODS
+  (`NilsixModsShown` filtre la liste, `PaintNilsixModSearch` dessine le champ et le filtre, `NilsixSearchPlace` y pose
+  la zone de texte ou la cache). `NILSIX_KIT_URL` (par exemple
   `file:///D:/WindowSmashLauncher/kit/`) remplace GitHub pour les tests.
 - `kit/mods_sync.py` : `make` écrit le fichier .bat, qui contient ce script et la liste des mods. Sur l'autre PC, `sync`
   fait la synchro puis la vérifie (`check` vérifie seulement). Le code est calculé sur la liste de mods que le jeu

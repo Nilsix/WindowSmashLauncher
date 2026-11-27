@@ -78,6 +78,46 @@ function Add-NilsixHook([string]$File, [string]$Anchor, [string]$With, [int]$Cou
     [IO.File]::WriteAllText($File, $text.Replace($Anchor, $With), (New-Object Text.UTF8Encoding $bom))
 }
 
+function Test-NilsixHook([string]$File, [string]$Anchor, [int]$Count) {
+    [regex]::Matches([IO.File]::ReadAllText($File), [regex]::Escape($Anchor)).Count -eq $Count
+}
+
+function Add-NilsixPage([string]$Ui, [string]$KitDir) {
+    # the release's launcher sources in $Ui (its OpenSmash.Launcher folder) with the NILSIX TOOLS page: the hooks into
+    # its files, then LauncherForm.Nilsix.cs and mods_sync.py (embedded) beside them
+    Add-NilsixHook (Join-Path $Ui 'LauncherForm.Paint.cs') 'case "yuzu": PaintYuzuRoom(g, W, H); break;' `
+        'case "nilsix": PaintNilsix(g, W, H); break;   case "yuzu": PaintYuzuRoom(g, W, H); break;' 1
+    Add-NilsixHook (Join-Path $Ui 'LauncherForm.Paint.cs') 'new[] { ("nav:settings", "SETTINGS"),' `
+        'new[] { ("nav:settings", "SETTINGS"), ("nav:nilsix", "NILSIX TOOLS"),' 2
+    Add-NilsixHook (Join-Path $Ui 'LauncherForm.Paint.cs') '_view == "competitive" ? "nav:competitive" : "nav:mods";' `
+        '_view == "competitive" ? "nav:competitive" : _view == "nilsix" ? "nav:nilsix" : "nav:mods";' 1
+    # (the page's jobs in the bar at the bottom, as on the MODS page, rather than the home page's strip: SetLoad)
+    Add-NilsixHook (Join-Path $Ui 'LauncherForm.Paint.cs') 'if (_loadOn && _view != "mods") PaintLoad(g, W, H);' `
+        'if (_loadOn && _view != "mods" && _view != "nilsix") PaintLoad(g, W, H);' 1
+    Add-NilsixHook (Join-Path $Ui 'LauncherForm.Paint.cs') 'if (_loadOn && _view == "mods")' `
+        'if (_loadOn && (_view == "mods" || _view == "nilsix"))' 1
+    Add-NilsixHook (Join-Path $Ui 'LauncherForm.cs') 'if (ActivateCompetitiveHit(id)) return;' `
+        'if (ActivateCompetitiveHit(id)) return;   if (ActivateNilsixHit(id)) return;' 1
+    # (OpenSmash's self-update builds the next release's launcher with this page: LauncherForm.Nilsix.cs)
+    Add-NilsixHook (Join-Path $Ui 'LauncherForm.Release.cs') 'await Updater.ReplaceLauncherAsync(_release, default, null, atRoot);' `
+        'await NilsixReplaceLauncherAsync(_release, atRoot);' 1
+    Add-NilsixHook (Join-Path $Ui 'OpenSmash.Launcher.csproj') '<EmbeddedResource Include="Assets\emblem-white.png" LogicalName="emblem.png" />' `
+        '<EmbeddedResource Include="Assets\emblem-white.png" LogicalName="emblem.png" /><EmbeddedResource Include="Nilsix\mods_sync.py" LogicalName="Nilsix.mods_sync.py" />' 1
+    # (kit 5.11, the MODS page's search and ALL / ON / OFF filter: its three hooks or none, so that a change of that page
+    # upstream leaves the rest of NILSIX TOOLS working)
+    $search = @(
+        @((Join-Path $Ui 'LauncherForm.cs'), 'var lines = new List<ModLine>();', 'var lines = new List<ModLine>(); var _mods = NilsixModsShown();'),
+        @((Join-Path $Ui 'LauncherForm.Paint.cs'), 'Theme.Label(g, $"INSTALLED  ({packages})", hf, A(Theme.Dim), x, top - 26 * s, 20 * s, sp);',
+          'Theme.Label(g, NilsixInstalled(packages), hf, A(Theme.Dim), x, top - 26 * s, 20 * s, sp); PaintNilsixModSearch(g, x, top, cw, sizeR);'),
+        @((Join-Path $Ui 'LauncherForm.Paint.cs'), 'PaintHeader(g, W, H);', 'NilsixSearchPlace(); PaintHeader(g, W, H);'))
+    if (@($search | Where-Object { -not (Test-NilsixHook $_[0] $_[1] 1) }).Count) {
+        Write-Host (L '  Nilsix tools: the MODS page changed in this release, so no search on it' '  Nilsix tools : la page MODS a changé dans cette version, donc pas de recherche dessus')
+    } else { foreach ($h in $search) { Add-NilsixHook $h[0] $h[1] $h[2] 1 } }
+    Copy-Item -LiteralPath (Join-Path $KitDir 'nilsix\LauncherForm.Nilsix.cs') -Destination $Ui
+    New-Item -ItemType Directory -Force -Path (Join-Path $Ui 'Nilsix') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $KitDir 'mods_sync.py') -Destination (Join-Path $Ui 'Nilsix')
+}
+
 function Install-NilsixLauncher([string]$Game, [string]$Base, [string]$State, [string]$KitDir, [string]$Version = '', [string]$Commit = '') {
     # $true when $Game\OpenSmash.exe is the launcher of release $Version ($Commit; without them, the release $Base
     # describes) with the NILSIX TOOLS page; $Script:NilsixBuilt says whether it was built just now
@@ -141,27 +181,7 @@ function Install-NilsixLauncher([string]$Game, [string]$Base, [string]$State, [s
         } finally { $z.Dispose() }
         $ui = Join-Path $src 'OpenSmash.Launcher'
         if (-not (Test-Path -LiteralPath (Join-Path $ui 'OpenSmash.Launcher.csproj'))) { throw "the source archive of $Commit has no OpenSmash.Launcher" }
-        Add-NilsixHook (Join-Path $ui 'LauncherForm.Paint.cs') 'case "yuzu": PaintYuzuRoom(g, W, H); break;' `
-            'case "nilsix": PaintNilsix(g, W, H); break;   case "yuzu": PaintYuzuRoom(g, W, H); break;' 1
-        Add-NilsixHook (Join-Path $ui 'LauncherForm.Paint.cs') 'new[] { ("nav:settings", "SETTINGS"),' `
-            'new[] { ("nav:settings", "SETTINGS"), ("nav:nilsix", "NILSIX TOOLS"),' 2
-        Add-NilsixHook (Join-Path $ui 'LauncherForm.Paint.cs') '_view == "competitive" ? "nav:competitive" : "nav:mods";' `
-            '_view == "competitive" ? "nav:competitive" : _view == "nilsix" ? "nav:nilsix" : "nav:mods";' 1
-        # (the page's jobs in the bar at the bottom, as on the MODS page, rather than the home page's strip: SetLoad)
-        Add-NilsixHook (Join-Path $ui 'LauncherForm.Paint.cs') 'if (_loadOn && _view != "mods") PaintLoad(g, W, H);' `
-            'if (_loadOn && _view != "mods" && _view != "nilsix") PaintLoad(g, W, H);' 1
-        Add-NilsixHook (Join-Path $ui 'LauncherForm.Paint.cs') 'if (_loadOn && _view == "mods")' `
-            'if (_loadOn && (_view == "mods" || _view == "nilsix"))' 1
-        Add-NilsixHook (Join-Path $ui 'LauncherForm.cs') 'if (ActivateCompetitiveHit(id)) return;' `
-            'if (ActivateCompetitiveHit(id)) return;   if (ActivateNilsixHit(id)) return;' 1
-        # (OpenSmash's self-update builds the next release's launcher with this page: LauncherForm.Nilsix.cs)
-        Add-NilsixHook (Join-Path $ui 'LauncherForm.Release.cs') 'await Updater.ReplaceLauncherAsync(_release, default, null, atRoot);' `
-            'await NilsixReplaceLauncherAsync(_release, atRoot);' 1
-        Add-NilsixHook (Join-Path $ui 'OpenSmash.Launcher.csproj') '<EmbeddedResource Include="Assets\emblem-white.png" LogicalName="emblem.png" />' `
-            '<EmbeddedResource Include="Assets\emblem-white.png" LogicalName="emblem.png" /><EmbeddedResource Include="Nilsix\mods_sync.py" LogicalName="Nilsix.mods_sync.py" />' 1
-        Copy-Item -LiteralPath (Join-Path $KitDir 'nilsix\LauncherForm.Nilsix.cs') -Destination $ui
-        New-Item -ItemType Directory -Force -Path (Join-Path $ui 'Nilsix') | Out-Null
-        Copy-Item -LiteralPath (Join-Path $KitDir 'mods_sync.py') -Destination (Join-Path $ui 'Nilsix')
+        Add-NilsixPage $ui $KitDir
 
         $out = Join-Path $work 'out'
         if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }

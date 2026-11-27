@@ -21,7 +21,7 @@
 param([string]$KitDir = '', [string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
-$KitVersion = '5.7 (2026-11-27)'
+$KitVersion = '5.11 (2026-11-27)'
 $Repo = 'OpenSmash-Ultimate/OpenSmash-Ultimate'
 $OldPin = '1a819b81b35b8ec3c0f4b0c6df3dab60eaf2244a'   # kit 4.5's pin
 $State = Join-Path $env:LOCALAPPDATA 'WindowSmash-setup'
