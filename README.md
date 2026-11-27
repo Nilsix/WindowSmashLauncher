@@ -15,8 +15,11 @@ lance. Tout le monde reste ainsi sur la même version, ce que faisait ce launche
    de la dernière version. Tes fichiers du jeu, tes builds, ta sauvegarde et tes réglages restent en place.
 3. Il met dans ce dossier l'OpenSmash.exe de la dernière version (vérifié avec son `.sha256`), puis il le lance.
    Sans dossier de jeu, OpenSmash.exe va dans tes Téléchargements, et son premier écran installe le jeu.
-   Si ton PC a le SDK .NET 8 (ou plus récent), cet OpenSmash.exe est compilé chez toi, avec un onglet de plus :
-   NILSIX TOOLS (voir plus bas).
+   Cet OpenSmash.exe est compilé chez toi, avec un onglet de plus : NILSIX TOOLS (voir plus bas). Il faut pour ça le
+   SDK .NET 8 (ou plus récent). Si ton PC ne l'a pas, le kit télécharge celui de Microsoft une seule fois, pour lui
+   seul : environ 300 Mo à télécharger, 750 Mo sur le disque (dans `%LOCALAPPDATA%\WindowSmash-setup\dotnet`), sans
+   droits administrateur. La compilation télécharge aussi environ 100 Mo de paquets (380 Mo dans
+   `%USERPROFILE%\.nuget\packages`).
 
 La première fois, OpenSmash propose une mise à jour : accepte-la. Il met le jeu à jour et le recompile (de quelques
 minutes à une heure). Ensuite, ouvre ce launcher ou OpenSmash.exe, comme tu préfères.
@@ -33,7 +36,8 @@ et se lance avec ses propres fichiers.
 
 L'onglet NILSIX TOOLS se trouve entre COMPETITIVE et PARAMÈTRES. Il est compilé depuis les sources de la version
 publiée d'OpenSmash, avec la même version : le jeu ne change pas, et tu restes compatible en ligne avec ceux qui ont
-l'OpenSmash.exe normal. Sans le SDK .NET, tu gardes l'OpenSmash.exe normal.
+l'OpenSmash.exe normal. Si la compilation échoue (pas d'internet, disque plein), tu gardes l'OpenSmash.exe normal, et
+le kit réessaie à son prochain lancement.
 
 Pour jouer en ligne avec des mods, il faut exactement les mêmes des deux côtés :
 

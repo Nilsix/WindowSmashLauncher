@@ -2,7 +2,8 @@
 # (kit\nilsix\LauncherForm.Nilsix.cs, with kit\mods_sync.py inside it), built here from the release's own sources (the
 # source archive of its commit, as GitHub serves it) with the release's version number, so OpenSmash sees itself up to
 # date. ssbu.exe is not touched: nothing changes online, friends who play with the release's OpenSmash.exe stay in sync.
-# Needs a .NET SDK 8 or newer; without one, or when the build fails, the release's OpenSmash.exe as before.
+# Needs a .NET SDK 8 or newer: this PC's, else (kit 5.7) Microsoft's own, downloaded once into WindowSmash-setup\dotnet
+# (Install-NilsixDotnet); when that or the build fails, the release's OpenSmash.exe as before.
 # Two callers:
 # - ws_setup.ps1 (the kit's .bat) dot-sources this file: Install-NilsixLauncher for the latest release, then
 #   Set-NilsixShortcuts (the kit's shortcuts open OpenSmash.exe from then on, one per folder);
@@ -15,14 +16,55 @@
 # nilsix-launcher\record.json says what OpenSmash.exe is: a start with nothing new builds nothing.
 # This file must stay UTF-8 with a BOM and CRLF.
 
-function Get-NilsixDotnet {
-    # dotnet when it has an SDK 8 or newer (the project is net8.0-windows), else $null
-    $cmd = Get-Command dotnet -ErrorAction SilentlyContinue
-    if (-not $cmd) { return $null }
+function Get-NilsixDotnet([string]$State = '') {
+    # dotnet when it has an SDK 8 or newer (the project is net8.0-windows): this PC's, else the kit's own
+    # ($State\dotnet, Install-NilsixDotnet), else $null
     $ErrorActionPreference = 'Continue'
-    $sdks = @(& $cmd.Source --list-sdks 2>$null)
-    if ($sdks | Where-Object { $_ -match '^\s*(\d+)\.' -and [int]$Matches[1] -ge 8 }) { return $cmd.Source }
+    foreach ($d in @((Get-Command dotnet -ErrorAction SilentlyContinue).Source) + @($(if ($State) { Join-Path $State 'dotnet\dotnet.exe' }))) {
+        if (-not $d -or -not (Test-Path -LiteralPath $d)) { continue }
+        $sdks = @(try { & $d --list-sdks 2>$null } catch { })   # (a dotnet.exe that does not start: none)
+        if ($sdks | Where-Object { $_ -match '^\s*(\d+)\.' -and [int]$Matches[1] -ge 8 }) { return $d }
+    }
     return $null
+}
+
+function Install-NilsixDotnet([string]$State) {
+    # kit 5.7: no SDK 8+ on this PC (most players): Microsoft's own .NET SDK zip, for the kit alone, in $State\dotnet (no
+    # admin rights, nothing put in PATH or the registry; about 300 MB downloaded once, 800 MB on disk), checked against
+    # the SHA-512 of Microsoft's release list. Its dotnet.exe, else an exception that says why.
+    # shortcut: channel 8.0 fixed, as the release workflow builds it (.github/workflows/release.yml, setup-dotnet
+    # 8.0.x); follow it when upstream moves to another .NET
+    $dir = Join-Path $State 'dotnet'
+    $root = [IO.Path]::GetPathRoot($State)
+    if ((New-Object IO.DriveInfo $root).AvailableFreeSpace -lt 2GB) { throw "the .NET SDK needs 2 GB free on $root" }
+    Write-Host (L "  Nilsix tools: no .NET SDK on this PC: downloading Microsoft's, once, for this kit only (about 300 MB, a few minutes)..." `
+                  "  Nilsix tools : pas de SDK .NET sur ce PC : téléchargement de celui de Microsoft, une seule fois, pour ce kit seulement (environ 300 Mo, quelques minutes)...")
+    $list = Join-Path $State 'dotnet-releases.json'
+    Get-Text 'https://builds.dotnet.microsoft.com/dotnet/release-metadata/8.0/releases.json' $list
+    $file = @(([IO.File]::ReadAllText($list) | ConvertFrom-Json).releases[0].sdk.files | Where-Object { $_.name -eq 'dotnet-sdk-win-x64.zip' })[0]
+    Remove-Item -LiteralPath $list -Force
+    if (-not $file -or $file.url -notmatch '^https://([a-z0-9-]+\.)+microsoft\.com/' -or $file.hash -notmatch '^[0-9a-fA-F]{128}$') {
+        throw "Microsoft's .NET release list names no SDK zip for Windows x64"
+    }
+    $zip = Join-Path $State 'dotnet-sdk.zip'
+    $part = "$dir.part"
+    try {
+        Get-Text $file.url $zip
+        if ((Get-FileHash -LiteralPath $zip -Algorithm SHA512).Hash -ne $file.hash) { throw 'the .NET SDK download is damaged (its SHA-512 differs)' }
+        foreach ($d in $part, $dir) {   # (left by a download that stopped, or an SDK that no longer starts)
+            if (-not (Test-Path -LiteralPath $d)) { continue }
+            if ((Get-Item -LiteralPath $d -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "$d is a link: not deleted, so no .NET SDK" }
+            Remove-Item -LiteralPath $d -Recurse -Force
+        }
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [IO.Compression.ZipFile]::ExtractToDirectory($zip, $part)
+        Rename-Item -LiteralPath $part -NewName (Split-Path -Leaf $dir)
+    } finally { Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue }
+    $dotnet = Join-Path $dir 'dotnet.exe'
+    if ((Get-NilsixDotnet $State) -ne $dotnet) { throw "the .NET SDK in $dir does not start" }
+    Write-Host (L "  Nilsix tools: .NET SDK $($file.url -replace '^.*/dotnet-sdk-([^/]+)-win-x64\.zip$', '$1') in $dir" `
+                  "  Nilsix tools : SDK .NET $($file.url -replace '^.*/dotnet-sdk-([^/]+)-win-x64\.zip$', '$1') dans $dir")
+    return $dotnet
 }
 
 function Add-NilsixHook([string]$File, [string]$Anchor, [string]$With, [int]$Count) {
@@ -44,8 +86,6 @@ function Install-NilsixLauncher([string]$Game, [string]$Base, [string]$State, [s
     if (-not (Test-Path -LiteralPath (Join-Path $Game 'tools'))) { return $false }
     # (an OpenSmash.exe a build here replaced while it ran: deleted once it no longer runs)
     Get-ChildItem -LiteralPath $Game -Filter 'OpenSmash.exe.nilsix-*.old' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-    $dotnet = Get-NilsixDotnet
-    if (-not $dotnet) { return $false }   # (most players: the release's OpenSmash.exe)
     $work = Join-Path $State 'nilsix-launcher'
     New-Item -ItemType Directory -Force -Path $work | Out-Null
     if (-not $Version) {
@@ -78,6 +118,8 @@ function Install-NilsixLauncher([string]$Game, [string]$Base, [string]$State, [s
     if (-not $lock) { return $false }
     try {
         if (& $isBuilt) { return $true }   # (the other one has just built it)
+        $dotnet = Get-NilsixDotnet $State
+        if (-not $dotnet) { $dotnet = Install-NilsixDotnet $State }
         Write-Host (L "Building OpenSmash.exe $Version with the NILSIX TOOLS page (one to a few minutes)..." `
                       "Compilation d'OpenSmash.exe $Version avec la page NILSIX TOOLS (une à quelques minutes)...")
         # the release's sources: the folders the launcher is built from, out of its commit's source archive
@@ -125,6 +167,8 @@ function Install-NilsixLauncher([string]$Game, [string]$Base, [string]$State, [s
         if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
         $log = Join-Path $work 'build.log'
         $env:DOTNET_NOLOGO = '1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+        # (and the SDK's first use leaves the user's certificates and PATH alone)
+        $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'; $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = 'false'
         # (as the release workflow builds it, .github/workflows/release.yml "Build OpenSmash.exe"; no compiler server left
         # running beside the game)
         $p = Start-Process -FilePath $dotnet -NoNewWindow -Wait -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err" -ArgumentList @(

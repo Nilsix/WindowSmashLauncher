@@ -188,6 +188,9 @@ Write-Section 'NILSIX TOOLS' {
     $dn = Get-Command dotnet -ErrorAction SilentlyContinue
     $sdks = if ($dn) { @(& $dn.Source --list-sdks 2>$null) } else { @() }
     Add-Line "  .NET SDKs              $(if ($sdks.Count) { $sdks -join '; ' } else { 'none' })"
+    $own = "$State\dotnet\dotnet.exe"   # (kit 5.7: the one the kit downloads when the PC has none)
+    $ownSdks = if (Test-There $own) { @(& $own --list-sdks 2>$null) } else { @() }
+    Add-Line "  the kit's own SDK      $(if ($ownSdks.Count) { $ownSdks -join '; ' } elseif (Test-There $own) { 'there, but it does not start' } else { 'none' })"
     if (-not $rec) { Add-Line "  no build of OpenSmash.exe with the NILSIX TOOLS tab here (record.json missing): the release's OpenSmash.exe" }
     else {
         Add-Line "  built                  OpenSmash.exe $($rec.version) ($(Get-Short ([string]$rec.commit))), kit $(Get-Short ([string]$rec.kit) 12)"
@@ -289,7 +292,8 @@ Write-Section (L 'Network' 'Réseau') {
     $bad = @()
     foreach ($u in 'https://api.github.com/', 'https://github.com/OpenSmash-Ultimate/OpenSmash-Ultimate/releases/latest', 'https://objects.githubusercontent.com/',
                    'https://release-assets.githubusercontent.com/', 'https://raw.githubusercontent.com/Nilsix/WindowSmashLauncher/main/README.md',
-                   'https://codeload.github.com/', 'https://api.nuget.org/v3/index.json', 'https://gamebanana.com/') {
+                   'https://codeload.github.com/', 'https://api.nuget.org/v3/index.json', 'https://builds.dotnet.microsoft.com/dotnet/release-metadata/8.0/releases.json',
+                   'https://gamebanana.com/') {
         $res = Test-Url $u
         if ($res -like 'NOT REACHED*') { $bad += ([uri]$u).Host }
         Add-Line ("  {0,-46} {1}" -f ([uri]$u).Host, $res)
