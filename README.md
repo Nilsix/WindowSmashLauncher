@@ -194,7 +194,7 @@ Windows, le nom du PC et les adresses IP publiques sont masqués dans le rapport
   si le jeu tourne. Après avoir appliqué les mods, `sync` fait les étapes de `os_mods.py refresh` (`refresh_plugins`)
   quand `skyline.plugin_refresh_reason` en donne une raison. `modonly` (MOD ONLY, lancé par Play après l'apply)
   réécrit `mods/.characters/ui/param/database/ui_chara_db.prc` : les persos du jeu qui ne sont ni Aléatoire ni le
-  combattant d'un moveset passent à `disp_order` -1. Il écrit `dump/mods/nilsix_modonly.json`, qui fait refaire l'apply
+  combattant d'un moveset passent à `disp_order` -1 et `can_select` faux, comme les lignes cachées du jeu (`disp_order` -1 seul les laissait à l'écran, 5.12-5.13). Un `ui_chara_db.prcxml` qui ne fait que modifier une ligne du jeu (Diluc : `color_num`) ne compte pas comme un nouveau perso. Il écrit `dump/mods/nilsix_modonly.json`, qui fait refaire l'apply
   au lancement suivant dans un autre mode (`NilsixModOnlyUndo`), et ajoute `.characters` à la liste de
   `dump/mods/applied.json`, d'où `runtime/net_relay.c` tire la liste de mods en ligne (l'apply suivant l'enlève ;
   `make` et `report` l'ignorent). Code de sortie 3 : rien à montrer, la raison affichée.

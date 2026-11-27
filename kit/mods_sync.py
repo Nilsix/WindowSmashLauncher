@@ -955,18 +955,37 @@ def has_bytes(path, needle):
         return False
 
 
-def new_moves(mods, tree, on):
+def adds_rows(path, game_rows):
+    """whether a ui_chara_db.prcxml adds select-screen rows (a struct past the game's rows, or one naming a ui_chara_id),
+    not only patches the game's (Diluc's: color_num of row 37, a moveset on that fighter's new costumes)"""
+    import prc
+    try:
+        with open(path, "rb") as f:
+            kind, db = prc.read_xml(f.read())
+    except Exception:   # (unreadable: taken as a character of its own, as before)
+        return True
+    for _key, (list_kind, entries) in db if kind == prc.STRUCT else []:
+        if list_kind == prc.LIST:
+            for i, (entry_kind, entry) in enumerate(entries):
+                if entry_kind == prc.STRUCT and (i >= game_rows or prc.hash40("ui_chara_id") in dict(entry)):
+                    return True
+    return False
+
+
+def new_moves(mods, tree, on, game_rows=10 ** 9):
     """the game's fighters (fighter/<name>) that turned-on mods give new moves: those a mod with a plugin has files for,
     when that mod adds no character of its own (none through the CSK Collection, add_chara_db_entry_info, and no
-    ui_chara_db file). A moveset on the fighter's new costumes counts too: its tile is the only way to it. Not a skin
-    (no plugin), Kirby's copy hats, nor fighter/common."""
+    ui_chara_db file, but a .prcxml that only patches the game's rows: adds_rows). A moveset on the fighter's new
+    costumes counts too: its tile is the only way to it. Not a skin (no plugin), Kirby's copy hats, nor fighter/common."""
     kinds = set()
     for name in on:
         folder = os.path.join(tree.mods, name)
         plugs = mods.plugins(folder)
         roots = mods.find_roots(folder) or [folder]
+        own = lambda r, x: os.path.join(r, *CHARA_DB[:-1], "ui_chara_db" + x)
         if not plugs or any(has_bytes(os.path.join(folder, p), b"add_chara_db_entry_info") for p in plugs) or any(
-                os.path.isfile(os.path.join(r, *CHARA_DB[:-1], "ui_chara_db" + x)) for r in roots for x in (".prc", ".prcx", ".prcxml")):
+                os.path.isfile(own(r, x)) for r in roots for x in (".prc", ".prcx")) or any(
+                os.path.isfile(own(r, ".prcxml")) and adds_rows(own(r, ".prcxml"), game_rows) for r in roots):
             continue
         for r in roots:
             base = os.path.join(r, "fighter")
@@ -1024,10 +1043,10 @@ def mod_only(root):
                         base = f.read()
                     hide.append(os.path.relpath(own, tree.mods).replace(os.sep, "/"))
     H = prc.hash40
-    ID, KIND, DISP = H("ui_chara_id"), H("fighter_kind"), H("disp_order")
+    ID, KIND, DISP, SELECT = H("ui_chara_id"), H("fighter_kind"), H("disp_order"), H("can_select")
     rows = lambda db: dict(db[1])[H("db_root")][1]
     games = {dict(st).get(ID, (None, None))[1] for _k, st in rows(prc.read(game))}
-    kinds = new_moves(mods, tree, on)
+    kinds = new_moves(mods, tree, on, len(rows(prc.read(game))))
     keep = {H("ui_chara_random")} | {H("ui_chara_" + TILE_OF.get(k, k)) for k in kinds}
     if kinds & set(MIIS):
         keep.add(H("ui_chara_miiall"))   # (the Miis' own row)
@@ -1044,8 +1063,12 @@ def mod_only(root):
         elif uid in keep or f.get(KIND, (None, None))[1] in fighters:
             kept += uid != H("ui_chara_random")
         else:
-            i = next(i for i, (k, _v) in enumerate(fields) if k == DISP)
-            fields[i] = (DISP, (fields[i][1][0], -1))
+            # as the game's own hidden rows (all 32: disp_order -1 and can_select false). disp_order -1 alone left the
+            # fighters on the screen (2026-11-27, the owner's MOD ONLY).
+            for field, value in ((DISP, -1), (SELECT, False)):
+                i = next((i for i, (k, _v) in enumerate(fields) if k == field), None)
+                if i is not None:
+                    fields[i] = (field, (fields[i][1][0], value))
             hidden += 1
     patched = any(os.path.isfile(os.path.join(r, *CHARA_DB[:-1], "ui_chara_db" + x))   # (characters a .prcxml adds)
                   for n in on for r in mods.find_roots(os.path.join(tree.mods, n)) for x in (".prcx", ".prcxml"))
