@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 """Mods sync between two OpenSmash Ultimate folders (Nilsix tools, github.com/Nilsix/WindowSmashLauncher).
 
-    mods_sync.py make  --tree <game folder> --out <folder>     your mods -> "Synchro mods - <you>.bat", to send
-    mods_sync.py make  ... --fuse                             a fusion file: "Fusion mods - <you>.bat"
+    mods_sync.py make  --tree <game folder> [--out <folder>]   your mods -> "Synchro mods/Synchro mods - <you>.bat"
+    mods_sync.py make  ... --fuse                             a fusion file: "Fusion mods/Fusion mods - <you>.bat"
     mods_sync.py sync  --tree <game folder> --manifest <json>  (run by that .bat) this folder's mods made the sender's
                        [--out <folder>]                        (a fusion: the file to send back goes there)
     mods_sync.py check --tree <game folder> --manifest <json>  only say whether they are the same
+(--out: the game folder when not given; each kind of file in its own folder there, named in English "Mods sync" and
+"Mods fusion". --show: the file written is then shown selected in an Explorer window.)
 
 Online, two games are the same when the mods they report are (runtime/net_relay.c mod_set_make: for each mod of
 dump/mods/applied.json, its folder's name and a hash of its files' paths and sizes, plus ARCropolis' code patches when
@@ -36,6 +38,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 
 FORMAT = "opensmash-mod-list"   # (tools/mods.py LIST_FORMAT: the Mods page's "import a list" reads these "mods" too)
@@ -49,6 +52,7 @@ OFF_PLUGINS = "off (mods sync)"   # (skyline/plugins/<this>: a plugin the sender
 MARK = "#@@"                      # (the .bat's parts; built here so no line of this file starts with it)
 FR = False
 BAR = True   # (make's PROGRESS and RESULT lines, for the NILSIX TOOLS page; sync runs in the .bat's console: off)
+SHOW = False   # (--show: the file written, selected in Explorer)
 
 
 def L(en, fr):
@@ -468,34 +472,43 @@ def write(root, out, mods, os_mods, tree, state, fuse=False, back_to="", others=
     if fuse:
         manifest["mode"] = "fuse"
     safe = re.sub(r"[^A-Za-z0-9 _.-]+", "_", who).strip(" ._") or "OpenSmash"
-    name = (L(f"Mods fusion - {safe}.bat", f"Fusion mods - {safe}.bat") if fuse
-            else L(f"Mods sync - {safe}.bat", f"Synchro mods - {safe}.bat"))
-    path = out if out.lower().endswith(".bat") else os.path.join(out, name)
+    kind = L("Mods fusion", "Fusion mods") if fuse else L("Mods sync", "Synchro mods")   # (the file's folder too)
+    if out.lower().endswith(".bat"):
+        path = out
+    else:
+        os.makedirs(os.path.join(out, kind), exist_ok=True)
+        path = os.path.join(out, kind, f"{kind} - {safe}.bat")
     with open(path, "w", encoding="utf-8", newline="\r\n") as f:
         f.write(bat_text(manifest, safe))
     say(L(f"Written: {path}", f"Fichier créé : {path}"))
+    if SHOW and os.name == "nt":
+        try:   # (explorer's own syntax: /select,"<path>", one argument)
+            subprocess.Popen(f'explorer.exe /select,"{path}"')
+        except OSError:
+            pass
     fp = manifest["fingerprint"]
     if back_to:
-        say(L(f"Send it back to {back_to}: with OpenSmash closed, {back_to} double-clicks it. At the end it must say SYNC OK and {fp}, as here.",
-              f"Renvoie-le à {back_to} : OpenSmash fermé, {back_to} double-clique dessus. À la fin, {back_to} doit voir SYNCHRO OK et {fp}, comme ici."))
+        say(L(f"Send it back to {back_to}: {back_to} double-clicks it (OpenSmash closes by itself). At the end it must say SYNC OK and {fp}, as here.",
+              f"Renvoie-le à {back_to} : {back_to} double-clique dessus (OpenSmash se ferme tout seul). À la fin, {back_to} doit voir SYNCHRO OK et {fp}, comme ici."))
     elif fuse:
-        say(L("Send it to your friend: they double-click it (OpenSmash closed). Their mods stay and yours are added. At the end it says "
-              "FUSION OK and writes a file on their desktop: they send it back to you, you double-click it, and you both have the same mods.",
-              "Envoie-le à la personne qui joue avec toi : OpenSmash fermé, elle double-clique dessus. Ses mods restent, les tiens s'ajoutent. "
-              "À la fin, elle voit FUSION OK et un fichier apparaît sur son bureau : elle te le renvoie, tu double-cliques dessus, et vous avez les mêmes mods."))
+        say(L("Send it to your friend: they double-click it (OpenSmash closes by itself). Their mods stay and yours are added. At the end it says "
+              "FUSION OK and shows a file in their OpenSmash folder: they send it back to you, you double-click it, and you both have the same mods.",
+              "Envoie-le à la personne qui joue avec toi : elle double-clique dessus (OpenSmash se ferme tout seul). Ses mods restent, les tiens s'ajoutent. "
+              "À la fin, elle voit FUSION OK et un fichier s'affiche dans son dossier OpenSmash : elle te le renvoie, tu double-cliques dessus, et vous avez les mêmes mods."))
     else:
-        say(L(f"Send it to your friend: they double-click it (OpenSmash closed). At the end it must say SYNC OK and {fp}.",
-              f"Envoie-le à la personne qui joue avec toi : OpenSmash fermé, elle double-clique dessus. À la fin, elle doit voir SYNCHRO OK et {fp}."))
+        say(L(f"Send it to your friend: they double-click it (OpenSmash closes by itself, then opens again). At the end it must say SYNC OK and {fp}.",
+              f"Envoie-le à la personne qui joue avec toi : elle double-clique dessus (OpenSmash se ferme tout seul, puis se rouvre). À la fin, elle doit voir SYNCHRO OK et {fp}."))
     if BAR:
         print("RESULT " + json.dumps({"ok": True, "file": path, "fingerprint": fp}), flush=True)
     return 0
 
 
-ABOUT = r"""rem Mods sync for OpenSmash Ultimate from @WHO@ (@MADE@). Double-click it with OpenSmash closed: your OpenSmash
-rem gets the same mods, turned on and off the same way, at the same versions. Nilsix tools (OpenSmash Ultimate Launcher)."""
-ABOUT_FUSE = r"""rem Mods fusion for OpenSmash Ultimate from @WHO@ (@MADE@). Double-click it with OpenSmash closed: your OpenSmash
-rem gets the mods @WHO@ has on and keeps yours. At the end, a file to send back to @WHO@ is written on your desktop.
-rem Nilsix tools (OpenSmash Ultimate Launcher)."""
+ABOUT = r"""rem Mods sync for OpenSmash Ultimate from @WHO@ (@MADE@). Double-click it: OpenSmash closes by itself, gets the
+rem same mods, turned on and off the same way, at the same versions, and opens again. Nilsix tools (OpenSmash Ultimate
+rem Launcher)."""
+ABOUT_FUSE = r"""rem Mods fusion for OpenSmash Ultimate from @WHO@ (@MADE@). Double-click it: OpenSmash closes by itself, gets the
+rem mods @WHO@ has on and keeps yours. At the end, a file to send back to @WHO@ is written in your OpenSmash folder and
+rem shown. Nilsix tools (OpenSmash Ultimate Launcher)."""
 
 BAT_HEAD = r"""@echo off
 @ABOUT@
@@ -555,12 +568,31 @@ if (-not $Game) {
 $Game = $Game.TrimEnd('\')
 Write-Host (L "OpenSmash folder: $Game" "Dossier OpenSmash : $Game")
 
-# nothing of that folder running: the game, OpenSmash, or one of its jobs (a build, shaders)
-$running = @(Get-Process -Name ssbu, OpenSmash -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($Game + '\', [StringComparison]::OrdinalIgnoreCase) })
-$jobs = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue | Where-Object { ("$($_.ExecutablePath) $($_.CommandLine)").IndexOf($Game, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
-if ($running.Count -or $jobs.Count) {
-    Write-Host (L 'Close OpenSmash and the game (and wait for a build to finish), then run this file again.' 'Ferme OpenSmash et le jeu (et attends la fin d''une compilation), puis relance ce fichier.') -ForegroundColor Yellow
+# nothing of that folder running: the game (a match is never cut), a job (a build, shaders: waited for a little), then
+# OpenSmash, closed the way its X button does (kit 5.10); a sync opens it again at the end
+function Get-Mine([string]$Name) { @(Get-Process -Name $Name -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($Game + '\', [StringComparison]::OrdinalIgnoreCase) }) }
+function Get-Jobs { @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue | Where-Object { ("$($_.ExecutablePath) $($_.CommandLine)").IndexOf($Game, [StringComparison]::OrdinalIgnoreCase) -ge 0 }) }
+if ((Get-Mine 'ssbu').Count) {
+    Write-Host (L 'The game is running: close it, then run this file again.' 'Le jeu est lancé : ferme-le, puis relance ce fichier.') -ForegroundColor Yellow
     exit 1
+}
+for ($i = 0; $i -lt 30 -and (Get-Jobs).Count; $i++) {
+    if ($i -eq 0) { Write-Host (L 'Waiting for an OpenSmash job to end...' "Attente de la fin d'une tâche d'OpenSmash...") }
+    Start-Sleep -Seconds 1
+}
+if ((Get-Jobs).Count) {
+    Write-Host (L 'OpenSmash is busy (a build, shaders): wait for it to end, then run this file again.' "OpenSmash est occupé (une compilation, des shaders) : attends la fin, puis relance ce fichier.") -ForegroundColor Yellow
+    exit 1
+}
+$open = Get-Mine 'OpenSmash'
+if ($open.Count) {
+    Write-Host (L 'Closing OpenSmash...' "Fermeture d'OpenSmash...")
+    foreach ($p in $open) { [void]$p.CloseMainWindow() }
+    foreach ($p in $open) { [void]$p.WaitForExit(15000) }
+    if ((Get-Mine 'OpenSmash').Count) {
+        Write-Host (L 'OpenSmash did not close (a job or a question open in it?): close it, then run this file again.' "OpenSmash ne s'est pas fermé (une tâche ou une question ouverte ?) : ferme-le, puis relance ce fichier.") -ForegroundColor Yellow
+        exit 1
+    }
 }
 $py = Get-Python $Game
 if (-not $py) {
@@ -574,12 +606,12 @@ $utf8 = New-Object Text.UTF8Encoding $false
 [IO.File]::WriteAllText((Join-Path $dir 'mods_sync.py'), (Get-Part 'mods_sync.py'), $utf8)
 [IO.File]::WriteAllText((Join-Path $dir 'manifest.json'), (Get-Part 'manifest.json'), $utf8)
 $lang = if ($Fr) { 'fr' } else { 'en' }
-$desk = [Environment]::GetFolderPath('Desktop'); if (-not $desk) { $desk = $env:USERPROFILE }   # (a fusion writes the file to send back there)
-& $py -I -X utf8 (Join-Path $dir 'mods_sync.py') sync --tree $Game --manifest (Join-Path $dir 'manifest.json') --lang $lang --out $desk
+& $py -I -X utf8 (Join-Path $dir 'mods_sync.py') sync --tree $Game --manifest (Join-Path $dir 'manifest.json') --lang $lang --show
 $rc = $LASTEXITCODE
 Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
 $exe = Join-Path $Game 'OpenSmash.exe'
-if ($rc -eq 0 -and (Test-Path -LiteralPath $exe)) { Start-Process -FilePath $exe -WorkingDirectory $Game }
+$fuse = (Get-Part 'manifest.json') -match '"mode":\s*"fuse"'   # (a fusion's file to send back stays in front instead)
+if ($rc -eq 0 -and -not $fuse -and (Test-Path -LiteralPath $exe)) { Start-Process -FilePath $exe -WorkingDirectory $Game }
 exit $rc
 """
 
@@ -802,11 +834,41 @@ def sync(root, man, out=""):
     # 6. applied as the Mods page does (tools/os_mods.py apply, without its pick rule: the sender's switches as they are)
     say(L("Applying the mods...", "Application des mods..."))
     mods.apply(tree, lambda t: say("  " + str(t)))
+    refresh_plugins(tree, mods, os_mods.skyline)
     rc = report(tree, man, mods, os_mods, problems, fuse)
     if fuse and rc == 0:   # (the file to send back: the fused mods, for the sender to get them the same way)
         say("")
         rc = write(root, out, mods, os_mods, tree, tree.load(), back_to=owner, others=set(want))
     return rc
+
+
+def refresh_plugins(tree, mods, skyline):
+    """7. the turned-on mods' plugins made into their DLLs as OpenSmash's REFRESH PLUGIN does (os_mods.py refresh), so
+    Play doesn't ask for it (kit 5.10). Linking the game again (UPDATE PLUGINS), when it has to be, is left to Play."""
+    state = tree.load()
+    for n in state["order"]:   # (a Mac's zip leaves "._plugin.nro", not an NRO: the plugin step stops there for every
+        folder = os.path.join(tree.mods, n)   # mod; the game's online check skips dot files, so the set stays the same)
+        for rel in mods.plugins(folder) if state["mods"][n].get("enabled") else ():
+            if os.path.basename(rel).startswith("._"):
+                os.replace(os.path.join(folder, rel), os.path.join(folder, rel + ".mac"))
+                say(L(f"  {n}: {rel} is a Mac's leftover, not a plugin: renamed {os.path.basename(rel)}.mac",
+                      f"  {n} : {rel} est un reste de Mac, pas un plugin : renommé {os.path.basename(rel)}.mac"))
+    if not skyline.plugin_refresh_reason(tree.root):
+        return
+    say(L("Refreshing the mods' plugins, as REFRESH PLUGIN in OpenSmash (a few minutes, then a test start of the game)...",
+          "Rafraîchissement des plugins des mods, comme REFRESH PLUGIN dans OpenSmash (quelques minutes, puis un démarrage test du jeu)..."))
+    log = lambda t: say("  " + str(t))
+    try:
+        jobs = skyline.build_jobs()
+        skyline.sync(tree.root, log, jobs)
+        skyline.cache_mod_plugins(tree.root, jobs, log)
+        skyline.probe_and_apply(tree.root, log)
+        left = skyline.plugin_refresh_reason(tree.root)
+    except (Exception, SystemExit) as ex:   # (a plugin that doesn't compile: the mods are synced all the same)
+        left = (str(ex).strip() or type(ex).__name__)[:400]
+    say(L(f"  Plugins not all ready ({left}): OpenSmash asks for it at Play.",
+          f"  Plugins pas tous prêts ({left}) : OpenSmash le demande à Jouer.") if left
+        else L("  Plugins ready.", "  Plugins prêts."))
 
 
 def report(tree, man, mods, os_mods, problems=(), fuse=False):
@@ -855,8 +917,8 @@ def report(tree, man, mods, os_mods, problems=(), fuse=False):
                   f"{conflicts} conflict(s), as at {owner}'s.",
                   f"SYNCHRO OK : les mêmes mods que {owner} ({on} activés, {off} désactivés), empreinte {fingerprint(mine)} ; "
                   f"{conflicts} conflit(s), comme chez {owner}."))
-        say(L("In OpenSmash, press Play: the first time, it builds the mods' plugins into the game (a few minutes).",
-              "Dans OpenSmash, clique sur Jouer : la première fois, il compile les plugins des mods dans le jeu (quelques minutes)."))
+        say(L("In OpenSmash, press Play (if the game itself has to be updated for a mod, it asks once).",
+              "Dans OpenSmash, clique sur Jouer (si le jeu lui-même doit être mis à jour pour un mod, il le demande une fois)."))
         return 0
     say("")
     if fuse:
@@ -873,7 +935,7 @@ def report(tree, man, mods, os_mods, problems=(), fuse=False):
 
 
 def main(argv):
-    global FR, BAR
+    global FR, BAR, SHOW
     ap = argparse.ArgumentParser(description="OpenSmash mods sync (Nilsix tools)")
     ap.add_argument("command", choices=("make", "sync", "check"))
     ap.add_argument("--tree", required=True)
@@ -881,11 +943,13 @@ def main(argv):
     ap.add_argument("--manifest", default="")
     ap.add_argument("--lang", default="")
     ap.add_argument("--fuse", action="store_true")
+    ap.add_argument("--show", action="store_true")
     a = ap.parse_args(argv[1:])
     FR = (a.lang or first_line(os.path.join(os.environ.get("LOCALAPPDATA", ""), "WindowSmash-setup", "lang.txt"))) == "fr"
     BAR = a.command == "make"
+    SHOW = a.show
     root = os.path.abspath(a.tree)
-    out = a.out or os.path.join(os.path.expanduser("~"), "Desktop")
+    out = a.out or root
     if not os.path.exists(os.path.join(root, "tools", "mods.py")):
         say(L(f"{root} is not an OpenSmash folder (no tools\\mods.py).", f"{root} n'est pas un dossier OpenSmash (pas de tools\\mods.py)."))
         return 2
