@@ -88,8 +88,10 @@ directement OpenSmash.exe, qui se met à jour tout seul. Il n'en garde qu'un par
 - Une nouvelle version d'OpenSmash : OpenSmash la propose comme d'habitude. Si tu acceptes, son nouveau launcher est
   compilé chez toi avec l'onglet NILSIX TOOLS (de 30 secondes à quelques minutes), puis OpenSmash redémarre et met le
   jeu à jour.
-- Une nouvelle version de NILSIX TOOLS : OpenSmash la cherche à chaque démarrage, en arrière-plan, et la compile. Elle
-  sert à partir du démarrage suivant. L'état s'affiche à droite du journal, dans l'onglet.
+- Une nouvelle version de NILSIX TOOLS : OpenSmash la cherche à chaque démarrage, en arrière-plan, et la compile
+  (environ une minute). Ensuite il se ferme et se relance tout seul avec elle, dès que rien ne serait coupé : pas de
+  partie lancée, pas de tâche dans la barre du bas, pas de question ouverte, fenêtre pas réduite. Si tu as lancé une
+  partie avant la fin, elle sert au démarrage suivant. L'état s'affiche à droite du journal, dans l'onglet.
 - Si la compilation échoue (par exemple quand OpenSmash a changé une partie du code dont l'onglet a besoin), OpenSmash
   prend son launcher normal, sans l'onglet, et les raccourcis redeviennent ceux d'avant. Il retente la compilation à
   chaque lancement, jusqu'à ce que le kit soit corrigé. Le détail est dans

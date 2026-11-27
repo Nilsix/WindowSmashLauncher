@@ -22,9 +22,9 @@ namespace OpenSmash.Launcher
     // on here to the friend's, none of theirs turned off, and writes on their desktop the sync file they send back.
     // Updates: this launcher keeps itself and this page up to date (the kit's .bat is only needed to install). At each
     // start, kit\nilsix_launcher.ps1 with the newest kit files of GitHub, in the background: when they changed, this
-    // release's launcher is built again with them (used from the next start). And OpenSmash's self-update builds the new
-    // release's launcher with this page instead of downloading the release's (NilsixReplaceLauncherAsync); the release's
-    // own when that fails, as before.
+    // release's launcher is built again with them, and (kit 5.9) this one closes and the new one starts, as soon as
+    // nothing would be cut (NilsixRestartTick). And OpenSmash's self-update builds the new release's launcher with this
+    // page instead of downloading the release's (NilsixReplaceLauncherAsync); the release's own when that fails, as before.
     public partial class LauncherForm
     {
         Process? _nilsixProc;
@@ -42,6 +42,9 @@ namespace OpenSmash.Launcher
         static string NilsixWork => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WindowSmash-setup", "nilsix-launcher");
         static Task<int>? s_nilsixKit;   // (the start's check; an update waits for it: one build at a time)
         readonly bool _nilsixBoot = NilsixBoot();
+        static System.Windows.Forms.Timer? s_nilsixRestartTimer;
+        static LauncherForm? s_nilsixForm;
+        static bool s_nilsixRestarting;
 
         static bool NilsixBoot()
         {
@@ -50,8 +53,93 @@ namespace OpenSmash.Launcher
             if (Updater.Off || s_nilsixKit != null || Directory.Exists(Path.Combine(repo, ".git"))
                 || !File.Exists(Path.Combine(NilsixWork, "record.json"))) return false;
             s_nilsixKit = Task.Run(() => NilsixKit(repo, null));
+            // (not in the launcher a restart started: one restart per update, never a loop)
+            if (Environment.GetEnvironmentVariable("NILSIX_RESTARTED") != "1")
+            {
+                s_nilsixRestartTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+                s_nilsixRestartTimer.Tick += (_, _) => NilsixRestartTick();
+                s_nilsixRestartTimer.Start();
+            }
             return true;
         }
+
+        // Each second on the window's thread, until the start's check ends: when it built the kit's update (10), this
+        // launcher restarts with it once nothing would be cut. (The check is static and knows no window: the first
+        // LauncherForm open, remembered before the game can hide it.)
+        static void NilsixRestartTick()
+        {
+            s_nilsixForm ??= System.Windows.Forms.Application.OpenForms.OfType<LauncherForm>().FirstOrDefault();
+            if (s_nilsixKit is not { IsCompleted: true } kit || s_nilsixForm == null) return;
+            bool built = kit.IsCompletedSuccessfully && kit.Result == 10 && !s_nilsixForm.IsDisposed;
+            if (built && !s_nilsixForm.NilsixIdle) return;
+            s_nilsixRestartTimer?.Stop();
+            s_nilsixRestartTimer?.Dispose();
+            s_nilsixRestartTimer = null;
+            if (built) s_nilsixForm.NilsixRestart();
+        }
+
+        // nothing a restart would cut: no game, no job (Busy: the bar at the bottom, a build, an install...), no question
+        // or setting being answered, no sign-in; the window shown (minimized, it waits: no window popping up over a game)
+        bool NilsixIdle => Visible && WindowState != System.Windows.Forms.FormWindowState.Minimized && !Busy && !_waitingForGame
+            && !NilsixRuns(_gameProcess) && !NilsixRuns(_shaderProc) && !NilsixRuns(_maintenanceProcess) && _nilsixProc == null
+            && _prepInflight is not { IsCompleted: false } && _editingKey == null && !_accountBusy && !_discordBusy
+            && !(_newModsPrompt || _updatePrompt || _shaderPrompt || _pluginPrompt || _rebuildPrompt || _sharePrompt || _checkModsPrompt || _showSetupPrompt);
+
+        static bool NilsixRuns(Process? p)
+        {
+            try { return p != null && !p.HasExited; }
+            catch (InvalidOperationException) { return false; }   // (no process behind it)
+            catch (System.ComponentModel.Win32Exception) { return true; }
+        }
+
+        // the bar at the bottom says it (Busy then: nothing else starts) for 2.5 s, then the folder's OpenSmash.exe (the one
+        // just built) starts once this one has closed; when that cannot start, this one stays open (from the next start)
+        void NilsixRestart()
+        {
+            s_nilsixRestarting = true;
+            SetLoad(NT("NILSIX TOOLS UPDATED: THE LAUNCHER STARTS AGAIN", "NILSIX TOOLS MIS À JOUR : LE LAUNCHER REDÉMARRE"), -1);
+            Invalidate();
+            var wait = new System.Windows.Forms.Timer { Interval = 2500 };
+            wait.Tick += (_, _) =>
+            {
+                wait.Stop();
+                wait.Dispose();
+                if (NilsixStartAgain()) { Close(); return; }
+                s_nilsixRestarting = false;
+                ClearLoad();
+                Invalidate();
+            };
+            wait.Start();
+        }
+
+        // A hidden PowerShell that waits for this process to end (Program.cs's single-instance mutex would turn the new one
+        // away) and then starts OpenSmash.exe as its shortcut does. Not with --updated: that would apply a pending release
+        // update by itself (MaybeShowBootPrompts). NILSIX_RESTARTED: the new one does not restart again.
+        static bool NilsixStartAgain()
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("powershell.exe") { UseShellExecute = false, CreateNoWindow = true };
+                foreach (string a in new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", NilsixStartAgainPs1 })
+                    psi.ArgumentList.Add(a);
+                psi.Environment["NILSIX_RESTARTED"] = "1";
+                psi.Environment["NILSIX_WAIT_PID"] = Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                psi.Environment["NILSIX_EXE"] = Path.Combine(Path.GetDirectoryName(Updater.ExePath) ?? "", "OpenSmash.exe");
+                using var p = Process.Start(psi);
+                if (p == null) return false;
+                NilsixAllowForeground(-1);   // (ASFW_ANY: this window is in front, the new one may come in front too)
+                return true;
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { return false; }
+        }
+
+        const string NilsixStartAgainPs1 =
+            "$p = Get-Process -Id ([int]$env:NILSIX_WAIT_PID) -ErrorAction SilentlyContinue; if ($p) { [void]$p.WaitForExit(60000) }; " +
+            "$exe = $env:NILSIX_EXE; Remove-Item Env:NILSIX_WAIT_PID, Env:NILSIX_EXE; " +
+            "Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe)";
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "AllowSetForegroundWindow")]
+        static extern bool NilsixAllowForeground(int processId);
 
         // kit\nilsix_launcher.ps1 with the newest kit files, for release r (null: the one this exe was built for). 0 =
         // OpenSmash.exe is already that one, 10 = built and put in place, 1 = not built (GitHub out of reach too).
@@ -286,6 +374,8 @@ namespace OpenSmash.Launcher
                 if (_nilsixBoot && s_nilsixKit is { } kit)   // (the start's update check, on the right when it fits)
                 {
                     string state = !kit.IsCompleted ? NT("NILSIX TOOLS: LOOKING FOR AN UPDATE...", "NILSIX TOOLS : RECHERCHE DE MISE À JOUR...")
+                        : kit.Result == 10 && (s_nilsixRestartTimer != null || s_nilsixRestarting)   // (restarting, or once nothing runs)
+                            ? NT("NILSIX TOOLS UPDATED: THE LAUNCHER RESTARTS", "NILSIX TOOLS MIS À JOUR : LE LAUNCHER REDÉMARRE")
                         : kit.Result == 10 ? NT("NILSIX TOOLS UPDATED: FROM THE NEXT START", "NILSIX TOOLS MIS À JOUR : AU PROCHAIN DÉMARRAGE")
                         : kit.Result == 0 ? NT("NILSIX TOOLS UP TO DATE", "NILSIX TOOLS À JOUR")
                         : NT("NILSIX TOOLS: UPDATE FAILED (update.log)", "NILSIX TOOLS : ÉCHEC DE LA MISE À JOUR (update.log)");
