@@ -60,6 +60,24 @@ contient d'autres fichiers est remplacé par le tien si c'est le même mod GameB
 Quand CRÉER LE FICHIER a mis des mods à jour, le code change : renvoie le nouveau fichier à la personne qui joue avec
 toi.
 
+### La fusion : les mods des deux
+
+**CRÉER UNE FUSION** ajoute tes mods à ceux de la personne qui joue avec toi, sans désactiver les siens :
+
+1. Clique sur **CRÉER UNE FUSION**. Comme pour CRÉER LE FICHIER, tes mods sont d'abord mis à jour depuis GameBanana.
+   `Fusion mods - <ton nom>.bat` arrive sur ton Bureau. Seuls tes mods activés en font partie.
+2. Envoie-le. Elle ferme OpenSmash et double-clique dessus. Ses propres mods activés sont mis à jour depuis
+   GameBanana, puis tes mods s'ajoutent aux siens. Les siens gardent leur activation, sauf une autre version d'un de
+   tes mods : elle est désactivée (gardée) et c'est la tienne qui sert. Les plugins des deux restent.
+3. À la fin, elle voit **FUSION OK**, avec la liste des conflits (ceux entre ses mods et les tiens d'abord). Ses mods
+   passent après les tiens dans l'ordre, donc ce sont eux qui gagnent un conflit. Un fichier
+   `Synchro mods - <son nom>.bat` arrive sur son Bureau.
+4. Elle te le renvoie et tu double-cliques dessus (OpenSmash fermé). Tu reçois ses mods dans le même ordre, puis
+   **SYNCHRO OK** et le même code des deux côtés.
+
+Un de ses mods qui ne vient pas de GameBanana doit être copié à la main dans ton dossier `mods` : le fichier le
+signale.
+
 ### Les mises à jour
 
 Avec NILSIX TOOLS, ce launcher ne sert qu'à installer : ensuite, ses raccourcis (Bureau, menu Démarrer) ouvrent
@@ -116,6 +134,8 @@ Windows, le nom du PC et les adresses IP publiques sont masqués dans le rapport
   fait la synchro puis la vérifie (`check` vérifie seulement). Le code est calculé sur la liste de mods que le jeu
   échange en ligne (`runtime/net_relay.c`) ; la vérification compare aussi l'ordre des mods et les plugins. Les étapes
   de `make` vont dans la barre en bas d'OpenSmash (lignes `PROGRESS <0 à 1, ou -1> <texte>`, `SetLoad`).
+  `make --fuse` écrit un fichier de fusion (`"mode": "fuse"` dans la liste, mods activés seulement) ; son `sync`
+  écrit le fichier de retour dans `--out` (le Bureau, donné par le .bat).
 - `Diagnostic OpenSmash.bat` : le diagnostic, un script PowerShell entre `#@@BEGIN diag.ps1` et `#@@END diag.ps1`
   (CRLF, en-tête ASCII). `OPENSMASH_DIAG_OUT` change le fichier écrit, `OPENSMASH_DIAG_QUIET=1` n'ouvre pas
   l'Explorateur.

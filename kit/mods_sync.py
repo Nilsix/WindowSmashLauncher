@@ -3,7 +3,9 @@
 """Mods sync between two OpenSmash Ultimate folders (Nilsix tools, github.com/Nilsix/WindowSmashLauncher).
 
     mods_sync.py make  --tree <game folder> --out <folder>     your mods -> "Synchro mods - <you>.bat", to send
+    mods_sync.py make  ... --fuse                             a fusion file: "Fusion mods - <you>.bat"
     mods_sync.py sync  --tree <game folder> --manifest <json>  (run by that .bat) this folder's mods made the sender's
+                       [--out <folder>]                        (a fusion: the file to send back goes there)
     mods_sync.py check --tree <game folder> --manifest <json>  only say whether they are the same
 
 Online, two games are the same when the mods they report are (runtime/net_relay.c mod_set_make: for each mod of
@@ -17,6 +19,13 @@ page does, then compares the set with the sender's.
 make first updates the sender's GameBanana mods that have a newer file of their own (newer_file: not another file of
 the page, an add-on or a variant), in place: same folder names, switches and order; then the game applies them. So the
 file gives both the newest.
+A fusion (make --fuse) adds the sender's mods to the friend's instead of turning the friend's off. Only the mods that
+are turned on travel. On the friend's PC, sync first updates the friend's own turned-on GameBanana mods (as make does
+for the sender's). It then takes each mod of the sender's as above, and keeps the friend's own mods with their
+switches. A mod on at either side is on, and the friend's own mods follow the sender's in the order, so they win a
+conflict. A friend's mod that is another version of one of the sender's is turned off, and the plugins are the union.
+At the end, sync writes the file the friend sends back: an ordinary sync file of the fused set (its turned-on mods).
+With it, the sender gets the same mods and the same code.
 Runs with the OpenSmash folder's Python and its tools (tools/mods.py).
 """
 import argparse
@@ -39,6 +48,7 @@ NATIVE = (".dll", ".so", ".dylib")
 OFF_PLUGINS = "off (mods sync)"   # (skyline/plugins/<this>: a plugin the sender doesn't have; the game reads only *.nro at the top)
 MARK = "#@@"                      # (the .bat's parts; built here so no line of this file starts with it)
 FR = False
+BAR = True   # (make's PROGRESS and RESULT lines, for the NILSIX TOOLS page; sync runs in the .bat's console: off)
 
 
 def L(en, fr):
@@ -52,7 +62,8 @@ def say(text=""):
 def step(label, done=-1, total=0):
     """make's step for OpenSmash.exe's NILSIX TOOLS page (LauncherForm.Nilsix.cs NilsixLine), which shows it in the
     bar at the bottom as OpenSmash's own jobs: "PROGRESS <0..1, or -1 while not known> <label>", not in the log"""
-    print(f"PROGRESS {done / total if total else -1:.3f} {label}", flush=True)
+    if BAR:
+        print(f"PROGRESS {done / total if total else -1:.3f} {label}", flush=True)
 
 
 # ---- what the game reports online ---------------------------------------------------------------------------------
@@ -200,6 +211,11 @@ def version_of(name):
     return parts(name)[1]
 
 
+def lineage(e):
+    """a mod's (GameBanana page, stem of its file): the same from one of its files to the next; None without a page"""
+    return (str(e["gamebanana"]), stem(e.get("file") or "")) if e.get("gamebanana") else None
+
+
 def newer_file(files, file_id, file_name, installed):
     """the file of a GameBanana page (its _aFiles) that replaces the installed one, else None: the newest with the
     same stem, uploaded after it (any time when the page no longer has it), not a lower version, not installed itself
@@ -265,14 +281,18 @@ def bar(label):
     return p
 
 
-def update(mods, os_mods, tree, state):
+def update(mods, os_mods, tree, state, only=None, apply=True):
     """make's first step: each GameBanana mod with a newer file of its own (newer_file) gets it in place - the same
-    folder names, switches and order - then the game applies them. Asks each page once. Returns the state."""
+    folder names, switches and order - then the game applies them (apply). Asks each page once. Returns the state.
+    only: the folders to look at (a fusion's sync: this PC's own turned-on mods), else all of them."""
     groups = {}   # (gamebanana, file_id): the folders installed from that file (a pack has several)
     for n in dict.fromkeys(state["order"]):
         m = state["mods"][n]
         if m.get("gamebanana") and m.get("file_id"):
             groups.setdefault((str(m["gamebanana"]), str(m["file_id"])), []).append(n)
+    every = dict(groups)
+    if only is not None:   # (a pack's file whole, when one of its folders is asked for)
+        groups = {k: names for k, names in groups.items() if only & set(names)}
     if not groups:
         return state
     say(L("Checking GameBanana for newer files...", "Recherche de versions plus récentes sur GameBanana..."))
@@ -299,7 +319,7 @@ def update(mods, os_mods, tree, state):
             say(L(f"  {title}: its GameBanana page could not be read (not checked)",
                   f"  {title} : sa page GameBanana n'a pas pu être lue (pas vérifié)"))
             continue
-        new = newer_file(pages[gb], fid, e.get("file", ""), {f for g, f in groups if g == gb})
+        new = newer_file(pages[gb], fid, e.get("file", ""), {f for g, f in every if g == gb})
         if new:
             todo.append((gb, fid, names, title, new))
         elif not any(str(f.get("_idRow")) == fid for f in pages[gb]):
@@ -328,7 +348,7 @@ def update(mods, os_mods, tree, state):
         shutil.rmtree(stage, ignore_errors=True)
         st = mods.Tree(os.path.join(stage, f"{gb}_{new['_idRow']}"))
         try:
-            got = mods.gamebanana_install(st, gb, new["_idRow"], bar(L("UPDATING ", "MISE À JOUR : ") + title.upper()))
+            got = mods.gamebanana_install(st, gb, new["_idRow"], bar(L("UPDATING ", "MISE À JOUR : ") + title.upper()) if BAR else progress())
         except Exception as ex:   # (mods.Error, the network, the archive: that mod stays as it is)
             say(L(f"  not updated, the download failed ({ex}): the file gives your version",
                   f"  pas mis à jour, le téléchargement a échoué ({ex}) : le fichier donne ta version"))
@@ -379,7 +399,7 @@ def update(mods, os_mods, tree, state):
         done += 1
         say(L(f"  updated: {new.get('_sFile')}", f"  mis à jour : {new.get('_sFile')}"))
     shutil.rmtree(stage, ignore_errors=True)
-    if not done:
+    if not done or not apply:
         return tree.load()
     step(L("APPLYING THE MODS", "APPLICATION DES MODS"))
     say(L("Applying the mods...", "Application des mods..."))
@@ -393,16 +413,23 @@ def update(mods, os_mods, tree, state):
 
 
 # ---- make: the sender's side ------------------------------------------------------------------------------------
-def make(root, out):
+def make(root, out, fuse=False):
     mods, os_mods, _std = tools(root)
     tree = mods.Tree(root)
-    state = update(mods, os_mods, tree, tree.load())
+    return write(root, out, mods, os_mods, tree, update(mods, os_mods, tree, tree.load()), fuse)
+
+
+def write(root, out, mods, os_mods, tree, state, fuse=False, back_to="", others=frozenset()):
+    """the file to send: every mod of this folder; only the turned-on ones in a fusion's file (fuse) and in the one
+    sent back after it (back_to: the sender's name; others: the sender's mods)"""
     hashes, listed = {}, []
     for i, n in enumerate(state["order"]):
         step(L("READING YOUR MODS", "LECTURE DE TES MODS"), i, len(state["order"]))
+        m = state["mods"][n]
+        if (fuse or back_to) and not m.get("enabled"):
+            continue
         if n not in hashes:
             hashes[n] = tree_hash(os.path.join(tree.mods, n))[0]
-        m = state["mods"][n]
         e = {"name": n, "enabled": bool(m.get("enabled"))}
         e.update({k: m[k] for k in META if m.get(k) not in (None, "")})
         e["hash"] = hashes[n]
@@ -417,37 +444,61 @@ def make(root, out):
     if ((tree.applied() or {}).get("mods") or []) != on:
         say(L("Note: your mods changed since the game last applied them: start the game once, then make this file again.",
               "Note : tes mods ont changé depuis que le jeu les a appliqués : lance le jeu une fois, puis refais ce fichier."))
-    manual = [n for n, e in unique.items() if not (e.get("gamebanana") and e.get("file_id"))]
+    manual = [n for n, e in unique.items() if not (e.get("gamebanana") and e.get("file_id")) and n not in others]
     if manual:
         say(L(f"Not from GameBanana (your friend needs these folders from you, mods\\<name>): {', '.join(manual)}",
               f"Pas de GameBanana (ces dossiers sont à envoyer toi-même, mods\\<nom>) : {', '.join(manual)}"))
     step(L("LOOKING FOR CONFLICTS", "RECHERCHE DES CONFLITS"))
     found = real_conflicts(mods, tree)
+    cross = [c for c in found if set(c["mods"]) & others and set(c["mods"]) - others]   # (after a fusion: yours against theirs)
     say(L(f"Conflicts: {len(found)} file(s) changed by more than one turned-on mod (the later one in the order wins; "
           "your friend gets the same order)",
           f"Conflits : {len(found)} fichier(s) modifiés par plusieurs mods activés (le dernier dans l'ordre gagne ; "
           "le fichier donne le même ordre)"))
-    for c in found[:5]:
+    if cross:
+        say(L(f"  {len(cross)} of them between your mods and {back_to}'s: yours come later, so they win",
+              f"  dont {len(cross)} entre tes mods et ceux de {back_to} : les tiens passent après, ils gagnent"))
+    for c in (cross + [c for c in found if c not in cross])[:5]:
         say(f"  {c['path']}: {' > '.join(c['mods'])}")
     step(L("WRITING THE FILE", "ÉCRITURE DU FICHIER"), 1, 1)
     manifest = {"format": FORMAT, "version": 1, "sync": SYNC, "from": who,
                 "made": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "opensmash": version(root),
                 "code_patches": code, "mods": listed, "set": [[n, h] for n, h in expected],
                 "fingerprint": fingerprint(expected), "plugins": plugins(root), "conflicts": len(found)}
+    if fuse:
+        manifest["mode"] = "fuse"
     safe = re.sub(r"[^A-Za-z0-9 _.-]+", "_", who).strip(" ._") or "OpenSmash"
-    path = out if out.lower().endswith(".bat") else os.path.join(out, L(f"Mods sync - {safe}.bat", f"Synchro mods - {safe}.bat"))
+    name = (L(f"Mods fusion - {safe}.bat", f"Fusion mods - {safe}.bat") if fuse
+            else L(f"Mods sync - {safe}.bat", f"Synchro mods - {safe}.bat"))
+    path = out if out.lower().endswith(".bat") else os.path.join(out, name)
     with open(path, "w", encoding="utf-8", newline="\r\n") as f:
         f.write(bat_text(manifest, safe))
     say(L(f"Written: {path}", f"Fichier créé : {path}"))
-    say(L(f"Send it to your friend: they double-click it (OpenSmash closed). At the end it must say SYNC OK and {manifest['fingerprint']}.",
-          f"Envoie-le à la personne qui joue avec toi : OpenSmash fermé, elle double-clique dessus. À la fin, elle doit voir SYNCHRO OK et {manifest['fingerprint']}."))
-    print("RESULT " + json.dumps({"ok": True, "file": path, "fingerprint": manifest["fingerprint"]}), flush=True)
+    fp = manifest["fingerprint"]
+    if back_to:
+        say(L(f"Send it back to {back_to}: with OpenSmash closed, {back_to} double-clicks it. At the end it must say SYNC OK and {fp}, as here.",
+              f"Renvoie-le à {back_to} : OpenSmash fermé, {back_to} double-clique dessus. À la fin, {back_to} doit voir SYNCHRO OK et {fp}, comme ici."))
+    elif fuse:
+        say(L("Send it to your friend: they double-click it (OpenSmash closed). Their mods stay and yours are added. At the end it says "
+              "FUSION OK and writes a file on their desktop: they send it back to you, you double-click it, and you both have the same mods.",
+              "Envoie-le à la personne qui joue avec toi : OpenSmash fermé, elle double-clique dessus. Ses mods restent, les tiens s'ajoutent. "
+              "À la fin, elle voit FUSION OK et un fichier apparaît sur son bureau : elle te le renvoie, tu double-cliques dessus, et vous avez les mêmes mods."))
+    else:
+        say(L(f"Send it to your friend: they double-click it (OpenSmash closed). At the end it must say SYNC OK and {fp}.",
+              f"Envoie-le à la personne qui joue avec toi : OpenSmash fermé, elle double-clique dessus. À la fin, elle doit voir SYNCHRO OK et {fp}."))
+    if BAR:
+        print("RESULT " + json.dumps({"ok": True, "file": path, "fingerprint": fp}), flush=True)
     return 0
 
 
+ABOUT = r"""rem Mods sync for OpenSmash Ultimate from @WHO@ (@MADE@). Double-click it with OpenSmash closed: your OpenSmash
+rem gets the same mods, turned on and off the same way, at the same versions. Nilsix tools (OpenSmash Ultimate Launcher)."""
+ABOUT_FUSE = r"""rem Mods fusion for OpenSmash Ultimate from @WHO@ (@MADE@). Double-click it with OpenSmash closed: your OpenSmash
+rem gets the mods @WHO@ has on and keeps yours. At the end, a file to send back to @WHO@ is written on your desktop.
+rem Nilsix tools (OpenSmash Ultimate Launcher)."""
+
 BAT_HEAD = r"""@echo off
-rem Mods sync for OpenSmash Ultimate from @WHO@ (@MADE@). Double-click it with OpenSmash closed: your OpenSmash
-rem gets the same mods, turned on and off the same way, at the same versions. Nilsix tools (OpenSmash Ultimate Launcher).
+@ABOUT@
 setlocal
 set "MS_SELF=%~f0"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $t=[IO.File]::ReadAllText($env:MS_SELF); $m=[regex]::Match($t,'(?s)\r?\n@MARK@BEGIN sync\.ps1\r?\n(.*?)\r?\n@MARK@END sync\.ps1'); if(-not $m.Success){ throw 'incomplete file' }; $f=Join-Path $env:TEMP ('mods-sync-'+$PID+'.ps1'); [IO.File]::WriteAllText($f,$m.Groups[1].Value,(New-Object Text.UTF8Encoding $true)); & $f -Self $env:MS_SELF; $rc=$LASTEXITCODE; Remove-Item -LiteralPath $f -ErrorAction SilentlyContinue; exit $rc } catch { Write-Host ('Mods sync error / erreur de la synchro: '+$_.Exception.Message) -ForegroundColor Red; exit 2 }"
@@ -523,7 +574,8 @@ $utf8 = New-Object Text.UTF8Encoding $false
 [IO.File]::WriteAllText((Join-Path $dir 'mods_sync.py'), (Get-Part 'mods_sync.py'), $utf8)
 [IO.File]::WriteAllText((Join-Path $dir 'manifest.json'), (Get-Part 'manifest.json'), $utf8)
 $lang = if ($Fr) { 'fr' } else { 'en' }
-& $py -I -X utf8 (Join-Path $dir 'mods_sync.py') sync --tree $Game --manifest (Join-Path $dir 'manifest.json') --lang $lang
+$desk = [Environment]::GetFolderPath('Desktop'); if (-not $desk) { $desk = $env:USERPROFILE }   # (a fusion writes the file to send back there)
+& $py -I -X utf8 (Join-Path $dir 'mods_sync.py') sync --tree $Game --manifest (Join-Path $dir 'manifest.json') --lang $lang --out $desk
 $rc = $LASTEXITCODE
 Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
 $exe = Join-Path $Game 'OpenSmash.exe'
@@ -535,7 +587,8 @@ exit $rc
 def bat_text(manifest, who):
     with open(os.path.abspath(__file__), encoding="utf-8") as f:
         me = f.read()
-    head = BAT_HEAD.replace("@WHO@", who).replace("@MADE@", manifest["made"]).replace("@MARK@", MARK)
+    head = (BAT_HEAD.replace("@ABOUT@", ABOUT_FUSE if manifest.get("mode") == "fuse" else ABOUT)
+            .replace("@WHO@", who).replace("@MADE@", manifest["made"]).replace("@MARK@", MARK))
     assert head.isascii()   # (cmd reads only this part, in the console's code page)
     parts = [head]
     for name, body in (("sync.ps1", SYNC_PS1.replace("@MARK@", MARK)), ("mods_sync.py", me),
@@ -562,12 +615,16 @@ def entry_of(e):
     return out
 
 
-def sync(root, man):
+def sync(root, man, out=""):
     mods, os_mods, std_plugins = tools(root)
     tree = mods.Tree(root)
     owner = man.get("from") or "?"
+    fuse = man.get("mode") == "fuse"
     say(L(f"Mods of {owner} ({man.get('made', '')}): {man.get('fingerprint', '')}",
           f"Mods de {owner} ({man.get('made', '')}) : {man.get('fingerprint', '')}"))
+    if fuse:
+        say(L(f"Fusion: the mods {owner} has on are added to yours, and none of yours is turned off.",
+              f"Fusion : les mods activés de {owner} s'ajoutent aux tiens, aucun des tiens n'est désactivé."))
     if man.get("opensmash") and version(root) != man["opensmash"]:
         say(L(f"Warning: your OpenSmash is not the version {owner} has ({version(root)[:7] or '?'} here, "
               f"{man['opensmash'][:7]} there). Update both to the latest one (OpenSmash offers it when it starts).",
@@ -580,6 +637,18 @@ def sync(root, man):
             want.setdefault(e["name"], e)
     os.makedirs(tree.mods, exist_ok=True)
     before = tree.load()
+    versions = collections.defaultdict(set)   # (lineage: the sender's files of it; another file of it is another version)
+    for e in want.values():
+        if lineage(e):
+            versions[lineage(e)].add(str(e.get("file_id")))
+
+    def other_version(m):
+        return lineage(m) in versions and str(m.get("file_id")) not in versions[lineage(m)]
+
+    if fuse:   # (this PC's own turned-on GameBanana mods at their newest first, as make does for the sender's)
+        low = {n.lower() for n in want}
+        before = update(mods, os_mods, tree, before, {n for n in before["order"] if before["mods"][n].get("enabled")
+                        and n.lower() not in low and not other_version(before["mods"][n])}, apply=False)
     cache = {}
 
     def h(n):
@@ -633,7 +702,7 @@ def sync(root, man):
                 problems.append(L(f"{n}: {owner}'s folder is not GameBanana's file (changed by hand?): copy mods\\{n} from {owner}'s PC",
                                   f"{n} : le dossier de {owner} n'est pas le fichier de GameBanana (modifié à la main ?) : copie mods\\{n} depuis son PC"))
     # 3. the folders to their names, in two steps (a folder can hold a name another one goes to); a folder of this
-    # PC's own that has a name the sender's mod needs is kept under another name, turned off
+    # PC's own that has a name the sender's mod needs is kept under another name, turned off (a fusion: its switch)
     moves = [(f, n) for n, f in plan.items() if f != n]
     sources = {f for f, _n in moves}
     present = {x.lower(): x for x in os.listdir(tree.mods)}
@@ -648,7 +717,7 @@ def sync(root, man):
             drops.append((holder, f".mods-sync-{os.getpid()}-old-{len(drops)}"))
             moves.append(drops[-1])
             continue
-        new = free_name(holder + L(" (old)", " (ancien)"), taken)
+        new = free_name(holder if fuse else holder + L(" (old)", " (ancien)"), taken)   # (a fusion: "<name> 2")
         taken.add(new.lower())
         moves.append((holder, new))
         olds[new] = holder
@@ -680,32 +749,45 @@ def sync(root, man):
         shutil.rmtree(os.path.join(tree.mods, hidden), ignore_errors=True)
         say(L(f"  your {holder} (another version of {owner}'s mod) is replaced by {owner}'s",
               f"  ton {holder} (une autre version du mod de {owner}) est remplacé par celui de {owner}"))
+    off = "" if fuse else L(", turned off", ", désactivé")
     for old, holder in olds.items():
-        say(L(f"  your own {holder} (other files than {owner}'s) is kept as {old}, turned off",
-              f"  ton propre {holder} (pas les mêmes fichiers que celui de {owner}) est gardé sous le nom {old}, désactivé"))
-    # 4. the switches and the order: the sender's, then this PC's own mods, turned off
+        say(L(f"  your own {holder} (other files than {owner}'s) is kept as {old}{off}",
+              f"  ton propre {holder} (pas les mêmes fichiers que celui de {owner}) est gardé sous le nom {old}{off}"))
+    # 4. the switches and the order: the sender's, then this PC's own mods, turned off (a fusion keeps their
+    # switches, except for another version of one of the sender's mods); so this PC's own win a conflict
     filled = set(plan) | set(staged)
     state = tree.load()
     for n in state["mods"]:
         if n in filled:
             state["mods"][n] = entry_of(want[n])
-        else:
-            if n in olds:
-                state["mods"][n] = dict(before["mods"].get(olds[n], {}))
-            if state["mods"][n].get("enabled") and n not in olds:
-                say(L(f"  {n}: {owner} doesn't have it: turned off (kept)", f"  {n} : {owner} ne l'a pas : désactivé (gardé)"))
-            state["mods"][n]["enabled"] = False
+            continue
+        if n in olds:
+            state["mods"][n] = dict(before["mods"].get(olds[n], {}))
+        m = state["mods"][n]
+        if fuse and m.get("enabled") and other_version(m):
+            say(L(f"  {n}: another version of one of {owner}'s mods: turned off (kept)",
+                  f"  {n} : une autre version d'un mod de {owner} : désactivé (gardé)"))
+        elif fuse:
+            continue
+        elif m.get("enabled") and n not in olds:
+            say(L(f"  {n}: {owner} doesn't have it: turned off (kept)", f"  {n} : {owner} ne l'a pas : désactivé (gardé)"))
+        m["enabled"] = False
     state["order"] = [n for n in order if n in filled] + [n for n in state["order"] if n not in filled]
-    if isinstance(man.get("code_patches"), bool):
-        state["code_patches"] = man["code_patches"]
-    else:
+    code = man.get("code_patches") if isinstance(man.get("code_patches"), bool) else None
+    if fuse:   # (on when on at either side, else automatic when automatic at either side)
+        mine = before.get("code_patches") if isinstance(before.get("code_patches"), bool) else None
+        code = True if True in (code, mine) else None if None in (code, mine) else False
+    if code is None:
         state.pop("code_patches", None)
+    else:
+        state["code_patches"] = code
     tree.save(state)   # (every folder is in mods.json now: OpenSmash won't ask to turn one on, LauncherForm ScanForNewMods)
-    # 5. the standard plugins: one the sender doesn't have is set aside; a missing or different one is fetched again
+    # 5. the standard plugins: one the sender doesn't have is set aside (a fusion keeps it); a missing or different
+    # one is fetched again
     want_p = {k.lower(): v for k, v in (man.get("plugins") or {}).items()}
     folder = os.path.join(root, "skyline", "plugins")
     for n in plugins(root):
-        if n.lower() not in want_p:
+        if n.lower() not in want_p and not fuse:
             os.makedirs(os.path.join(folder, OFF_PLUGINS), exist_ok=True)
             os.replace(os.path.join(folder, n), os.path.join(folder, OFF_PLUGINS, n))
             say(L(f"  plugin {n}: {owner} doesn't have it: moved to skyline\\plugins\\{OFF_PLUGINS}",
@@ -720,11 +802,16 @@ def sync(root, man):
     # 6. applied as the Mods page does (tools/os_mods.py apply, without its pick rule: the sender's switches as they are)
     say(L("Applying the mods...", "Application des mods..."))
     mods.apply(tree, lambda t: say("  " + str(t)))
-    return report(tree, man, mods, os_mods, problems)
+    rc = report(tree, man, mods, os_mods, problems, fuse)
+    if fuse and rc == 0:   # (the file to send back: the fused mods, for the sender to get them the same way)
+        say("")
+        rc = write(root, out, mods, os_mods, tree, tree.load(), back_to=owner, others=set(want))
+    return rc
 
 
-def report(tree, man, mods, os_mods, problems=()):
-    """the online set here against the sender's, the plugins and the conflicts; 0 when the same"""
+def report(tree, man, mods, os_mods, problems=(), fuse=False):
+    """the online set here against the sender's, the plugins and the conflicts; 0 when the same (fuse: when all of
+    the sender's are here, beside this PC's own)"""
     owner = man.get("from") or "?"
     names = (tree.applied() or {}).get("mods") or []
     mine = online_set(tree, names, os_mods.code_patches_on(tree))
@@ -732,7 +819,7 @@ def report(tree, man, mods, os_mods, problems=()):
     a, b = collections.Counter(mine), collections.Counter(theirs)
     lacking, extra = b - a, a - b
     diff = []
-    for n, _x in sorted(set(lacking) | set(extra)):
+    for n, _x in sorted(set(lacking) | (set() if fuse else set(extra))):
         if n in {m for m, _ in lacking} and n in {m for m, _ in extra}:
             line = L(f"{n}: not the same files as {owner}'s", f"{n} : pas les mêmes fichiers que chez {owner}")
         elif n in {m for m, _ in lacking}:
@@ -746,7 +833,8 @@ def report(tree, man, mods, os_mods, problems=()):
         if mine_p.get(n.lower()) != sha:
             diff.append(L(f"plugin {n}: not the same as {owner}'s (update OpenSmash, both of you)",
                           f"plugin {n} : pas le même que chez {owner} (mettez OpenSmash à jour tous les deux)"))
-    if not diff and names != [e["name"] for e in man.get("mods") or [] if e.get("enabled")]:
+    want_on = [e["name"] for e in man.get("mods") or [] if e.get("enabled")]
+    if not diff and [n for n in names if not fuse or n in want_on] != want_on:
         # (the online check doesn't see it, but the later mod's files win a conflict: another order is another game)
         diff.append(L(f"the mods are not in {owner}'s order (the later one wins a conflict)",
                       f"les mods ne sont pas dans l'ordre de {owner} (le dernier gagne un conflit)"))
@@ -757,47 +845,62 @@ def report(tree, man, mods, os_mods, problems=()):
     off = len(tree.load()["mods"]) - on
     if not diff:
         say("")
-        say(L(f"SYNC OK: the same mods as {owner} ({on} on, {off} off), online set {fingerprint(mine)}; "
-              f"{conflicts} conflict(s), as at {owner}'s.",
-              f"SYNCHRO OK : les mêmes mods que {owner} ({on} activés, {off} désactivés), empreinte {fingerprint(mine)} ; "
-              f"{conflicts} conflit(s), comme chez {owner}."))
+        if fuse:
+            say(L(f"FUSION OK: {owner}'s mods are added to yours ({on} on, {off} off), online set {fingerprint(mine)}; "
+                  f"{conflicts} conflict(s).",
+                  f"FUSION OK : les mods de {owner} sont ajoutés aux tiens ({on} activés, {off} désactivés), empreinte "
+                  f"{fingerprint(mine)} ; {conflicts} conflit(s)."))
+        else:
+            say(L(f"SYNC OK: the same mods as {owner} ({on} on, {off} off), online set {fingerprint(mine)}; "
+                  f"{conflicts} conflict(s), as at {owner}'s.",
+                  f"SYNCHRO OK : les mêmes mods que {owner} ({on} activés, {off} désactivés), empreinte {fingerprint(mine)} ; "
+                  f"{conflicts} conflit(s), comme chez {owner}."))
         say(L("In OpenSmash, press Play: the first time, it builds the mods' plugins into the game (a few minutes).",
               "Dans OpenSmash, clique sur Jouer : la première fois, il compile les plugins des mods dans le jeu (quelques minutes)."))
         return 0
     say("")
-    say(L(f"NOT IN SYNC with {owner} (online set {fingerprint(mine)} here, {man.get('fingerprint', '?')} there):",
-          f"PAS SYNCHRO avec {owner} (empreinte {fingerprint(mine)} ici, {man.get('fingerprint', '?')} chez {owner}) :"))
+    if fuse:
+        say(L(f"FUSION NOT FINISHED with {owner}:", f"FUSION PAS FINIE avec {owner} :"))
+    else:
+        say(L(f"NOT IN SYNC with {owner} (online set {fingerprint(mine)} here, {man.get('fingerprint', '?')} there):",
+              f"PAS SYNCHRO avec {owner} (empreinte {fingerprint(mine)} ici, {man.get('fingerprint', '?')} chez {owner}) :"))
     for line in diff:
         say("  " + line)
+    if fuse:
+        say(L(f"Fix that, then run this file again: the file to send back to {owner} is written at the end.",
+              f"Corrige ça, puis relance ce fichier : le fichier à renvoyer à {owner} est créé à la fin."))
     return 1
 
 
 def main(argv):
-    global FR
+    global FR, BAR
     ap = argparse.ArgumentParser(description="OpenSmash mods sync (Nilsix tools)")
     ap.add_argument("command", choices=("make", "sync", "check"))
     ap.add_argument("--tree", required=True)
     ap.add_argument("--out", default="")
     ap.add_argument("--manifest", default="")
     ap.add_argument("--lang", default="")
+    ap.add_argument("--fuse", action="store_true")
     a = ap.parse_args(argv[1:])
     FR = (a.lang or first_line(os.path.join(os.environ.get("LOCALAPPDATA", ""), "WindowSmash-setup", "lang.txt"))) == "fr"
+    BAR = a.command == "make"
     root = os.path.abspath(a.tree)
+    out = a.out or os.path.join(os.path.expanduser("~"), "Desktop")
     if not os.path.exists(os.path.join(root, "tools", "mods.py")):
         say(L(f"{root} is not an OpenSmash folder (no tools\\mods.py).", f"{root} n'est pas un dossier OpenSmash (pas de tools\\mods.py)."))
         return 2
     try:
         if a.command == "make":
-            return make(root, a.out or os.path.join(os.path.expanduser("~"), "Desktop"))
+            return make(root, out, a.fuse)
         with open(a.manifest, encoding="utf-8-sig") as f:
             man = json.load(f)
         if not isinstance(man, dict) or man.get("format") != FORMAT or man.get("sync") != SYNC:
             say(L("This is not a mods sync file of this version.", "Ce n'est pas un fichier de synchro de cette version."))
             return 2
         if a.command == "sync":
-            return sync(root, man)
+            return sync(root, man, out)
         mods, os_mods, _std = tools(root)
-        return report(mods.Tree(root), man, mods, os_mods)
+        return report(mods.Tree(root), man, mods, os_mods, fuse=man.get("mode") == "fuse")
     except Exception as ex:   # (mods.Error is the person's to act on; anything else is said the same way)
         say(L(f"Stopped: {ex}", f"Arrêté : {ex}"))
         if a.command == "make":

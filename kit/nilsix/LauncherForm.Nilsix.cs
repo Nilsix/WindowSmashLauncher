@@ -18,6 +18,8 @@ namespace OpenSmash.Launcher
     // "Synchro mods - <name>.bat" (English: "Mods sync - <name>.bat") on the desktop; a friend double-clicks it and their
     // mods become these: the same folders, switches, order and versions, then checked against the set the game reports
     // online. Its steps show in the bar at the bottom (SetLoad), as OpenSmash's own jobs do on the MODS page.
+    // MAKE A FUSION FILE runs make --fuse: "Fusion mods - <name>.bat" ("Mods fusion - <name>.bat") adds the mods turned
+    // on here to the friend's, none of theirs turned off, and writes on their desktop the sync file they send back.
     // Updates: this launcher keeps itself and this page up to date (the kit's .bat is only needed to install). At each
     // start, kit\nilsix_launcher.ps1 with the newest kit files of GitHub, in the background: when they changed, this
     // release's launcher is built again with them (used from the next start). And OpenSmash's self-update builds the new
@@ -28,7 +30,7 @@ namespace OpenSmash.Launcher
         Process? _nilsixProc;
         readonly List<string> _nilsixLog = new();
         string? _nilsixFile, _nilsixPrint;
-        bool _nilsixFailed, _nilsixWatch;
+        bool _nilsixFailed, _nilsixWatch, _nilsixFuse;
 
         static bool NilsixFr => UiLocale.Language.StartsWith("fr", StringComparison.OrdinalIgnoreCase);
         static string NT(string en, string fr) => NilsixFr ? fr : en;
@@ -124,7 +126,8 @@ namespace OpenSmash.Launcher
             switch (id)
             {
                 case "nav:nilsix": GoView("nilsix"); return true;
-                case "nilsix:sync-make": NilsixMakeSync(); return true;
+                case "nilsix:sync-make": NilsixMakeSync(false); return true;
+                case "nilsix:sync-fuse": NilsixMakeSync(true); return true;
                 case "nilsix:sync-open":
                     if (_nilsixFile != null && File.Exists(_nilsixFile))
                         try { Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + _nilsixFile + "\"") { UseShellExecute = false }); }
@@ -134,13 +137,14 @@ namespace OpenSmash.Launcher
             return false;
         }
 
-        void NilsixMakeSync()
+        void NilsixMakeSync(bool fuse)
         {
             if (_nilsixProc != null) return;
             lock (_nilsixLog) _nilsixLog.Clear();
             _nilsixFile = _nilsixPrint = null;
             _nilsixFailed = false;
-            SetLoad(NT("MAKING THE FILE", "CRÉATION DU FICHIER"), -1);   // (the bar at the bottom; mods_sync.py's steps then)
+            _nilsixFuse = fuse;
+            SetLoad(fuse ? NT("MAKING THE FUSION FILE", "CRÉATION DU FICHIER DE FUSION") : NT("MAKING THE FILE", "CRÉATION DU FICHIER"), -1);   // (the bar at the bottom; mods_sync.py's steps then)
             try
             {
                 string dir = Path.Combine(Path.GetTempPath(), "opensmash-nilsix");
@@ -160,6 +164,7 @@ namespace OpenSmash.Launcher
                                              "--out", Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
                                              "--lang", NilsixFr ? "fr" : "en" })
                     psi.ArgumentList.Add(a);
+                if (fuse) psi.ArgumentList.Add("--fuse");
                 var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 p.OutputDataReceived += (_, e) => NilsixLine(e.Data);
                 p.ErrorDataReceived += (_, e) => NilsixLine(e.Data);
@@ -231,7 +236,7 @@ namespace OpenSmash.Launcher
             bool running = _nilsixProc != null, canMake = !running && !Busy;   // (Busy: another job has the bar at the bottom)
 
             // the mods sync card: what it does, the main button and the file's folder
-            float cy = ContentTop * s, ch = 132 * s, cut = 22 * s, pad = 24 * s;
+            float cy = ContentTop * s, ch = 174 * s, cut = 22 * s, pad = 24 * s;
             {
                 var st = PushReveal(g, 0);
                 using (var path = Theme.CutCorner(x, cy, cw, ch, cut))
@@ -252,13 +257,19 @@ namespace OpenSmash.Launcher
                 Theme.DrawText(g, NT("They double-click it with OpenSmash closed. SYNC OK and the same code as here: the same game online.",
                                      "Double-clic dessus, OpenSmash fermé. SYNCHRO OK et le même code qu'ici : le même jeu en ligne."),
                     FB(14 * s), A(Theme.Muted), x + pad, cy + 106 * s, maxW, 20 * s);
+                Theme.DrawText(g, NT("Fusion: your turned-on mods join theirs (nothing is turned off), then a file comes back to you.",
+                                     "Fusion : tes mods activés s'ajoutent aux siens (rien n'est désactivé), puis un fichier te revient."),
+                    FB(14 * s), A(Theme.Muted), x + pad, cy + 128 * s, maxW, 20 * s);
                 Theme.ButtonAnimated(g, NT("MAKE THE FILE", "CRÉER LE FICHIER"), bx, cy + 22 * s, bw, 38 * s, s, primary: true,
                     Hov("nilsix:sync-make", canMake && _hover == "nilsix:sync-make"), canMake, 13 * s, _alpha, press: Press("nilsix:sync-make"));
                 if (canMake) AddHit("nilsix:sync-make", bx, cy + 22 * s, bw, 38 * s);
+                Theme.ButtonAnimated(g, NT("MAKE A FUSION FILE", "CRÉER UNE FUSION"), bx, cy + 70 * s, bw, 32 * s, s, primary: false,
+                    Hov("nilsix:sync-fuse", canMake && _hover == "nilsix:sync-fuse"), canMake, 12 * s, _alpha, press: Press("nilsix:sync-fuse"));
+                if (canMake) AddHit("nilsix:sync-fuse", bx, cy + 70 * s, bw, 32 * s);
                 bool canOpen = !running && _nilsixFile != null;
-                Theme.ButtonAnimated(g, NT("SHOW THE FILE", "VOIR LE FICHIER"), bx, cy + 70 * s, bw, 32 * s, s, primary: false,
+                Theme.ButtonAnimated(g, NT("SHOW THE FILE", "VOIR LE FICHIER"), bx, cy + 112 * s, bw, 32 * s, s, primary: false,
                     Hov("nilsix:sync-open", canOpen && _hover == "nilsix:sync-open"), canOpen, 12 * s, _alpha, press: Press("nilsix:sync-open"));
-                if (canOpen) AddHit("nilsix:sync-open", bx, cy + 70 * s, bw, 32 * s);
+                if (canOpen) AddHit("nilsix:sync-open", bx, cy + 112 * s, bw, 32 * s);
                 PopFade(g, st);
             }
 
@@ -268,6 +279,7 @@ namespace OpenSmash.Launcher
                 var st = PushReveal(g, 1);
                 bool done = !running && !_nilsixFailed && _nilsixPrint != null;
                 string head = running ? NT("WORKING...", "EN COURS...")
+                    : done && _nilsixFuse ? NT("FUSION FILE ON THE DESKTOP", "FICHIER DE FUSION SUR LE BUREAU")   // (the fused set's code comes with the file sent back)
                     : done ? NT("FILE ON THE DESKTOP  ·  CODE ", "FICHIER SUR LE BUREAU  ·  CODE ") + _nilsixPrint
                     : _nilsixFailed ? NT("STOPPED", "ARRÊTÉ") : NT("LOG", "JOURNAL");
                 Theme.Label(g, head, FM(12 * s, true), A(done ? Theme.Ready : _nilsixFailed ? Theme.Bad : Theme.Dim), x, top, 20 * s, 12 * s * 0.14f);
@@ -291,7 +303,7 @@ namespace OpenSmash.Launcher
                 float lh = 19 * s, ly = top + 38 * s;
                 int fit = Math.Max(0, (int)((bottom - ly) / lh));
                 if (lines.Length == 0 && !running)
-                    Theme.DrawText(g, NT("Nothing yet: press MAKE THE FILE.", "Rien pour l'instant : clique sur CRÉER LE FICHIER."),
+                    Theme.DrawText(g, NT("Nothing yet: press MAKE THE FILE or MAKE A FUSION FILE.", "Rien pour l'instant : clique sur CRÉER LE FICHIER ou CRÉER UNE FUSION."),
                         FB(14 * s), A(Theme.Dim), x, ly, cw, 22 * s);
                 foreach (string line in lines.Skip(Math.Max(0, lines.Length - fit)))
                 {
