@@ -118,7 +118,10 @@ pour Vegito). Si aucun mod activé n'ajoute de perso ni de moveset, le jeu ne se
 - Le JOUER ou VANILLA suivant remet tous les persos (la barre APPLYING MODS s'affiche une fois).
 - Changer de mods dans le menu du jeu remet tous les persos au redémarrage du jeu. Le raccourci qui lance le jeu
   directement (sans le launcher) garde l'écran du dernier lancement.
-- En ligne, rien ne change : la liste de mods échangée et le code de synchro sont les mêmes qu'avec JOUER.
+- En ligne, MOD ONLY ne joue qu'avec quelqu'un qui est aussi en MOD ONLY, avec les mêmes mods : la liste de mods
+  que le jeu échange compte `.characters` en plus. Contre quelqu'un en JOUER, le jeu plantait au début du match
+  (kit 5.12) ; depuis 5.13, les deux jeux ne se voient plus comme ayant les mêmes mods. Le code de synchro et les
+  fichiers de synchro ne changent pas.
 
 ### Les mises à jour
 
@@ -192,7 +195,9 @@ Windows, le nom du PC et les adresses IP publiques sont masqués dans le rapport
   quand `skyline.plugin_refresh_reason` en donne une raison. `modonly` (MOD ONLY, lancé par Play après l'apply)
   réécrit `mods/.characters/ui/param/database/ui_chara_db.prc` : les persos du jeu qui ne sont ni Aléatoire ni le
   combattant d'un moveset passent à `disp_order` -1. Il écrit `dump/mods/nilsix_modonly.json`, qui fait refaire l'apply
-  au lancement suivant dans un autre mode (`NilsixModOnlyUndo`). Code de sortie 3 : rien à montrer, la raison affichée.
+  au lancement suivant dans un autre mode (`NilsixModOnlyUndo`), et ajoute `.characters` à la liste de
+  `dump/mods/applied.json`, d'où `runtime/net_relay.c` tire la liste de mods en ligne (l'apply suivant l'enlève ;
+  `make` et `report` l'ignorent). Code de sortie 3 : rien à montrer, la raison affichée.
 - `Diagnostic OpenSmash.bat` : le diagnostic, un script PowerShell entre `#@@BEGIN diag.ps1` et `#@@END diag.ps1`
   (CRLF, en-tête ASCII). `OPENSMASH_DIAG_OUT` change le fichier écrit, `OPENSMASH_DIAG_QUIET=1` n'ouvre pas
   l'Explorateur.

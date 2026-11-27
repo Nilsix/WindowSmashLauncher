@@ -447,7 +447,7 @@ def write(root, out, mods, os_mods, tree, state, fuse=False, back_to="", others=
     unique = {e["name"]: e for e in listed}
     say(L(f"{len(unique)} mods ({len(set(on))} on), online set {fingerprint(expected)}",
           f"{len(unique)} mods ({len(set(on))} activés), empreinte en ligne {fingerprint(expected)}"))
-    if ((tree.applied() or {}).get("mods") or []) != on:
+    if [n for n in (tree.applied() or {}).get("mods") or [] if n != mods.CHARACTERS] != on:   # (MOD ONLY's entry: mod_only)
         say(L("Note: your mods changed since the game last applied them: start the game once, then make this file again.",
               "Note : tes mods ont changé depuis que le jeu les a appliqués : lance le jeu une fois, puis refais ce fichier."))
     manual = [n for n, e in unique.items() if not (e.get("gamebanana") and e.get("file_id")) and n not in others]
@@ -877,7 +877,7 @@ def report(tree, man, mods, os_mods, problems=(), fuse=False):
     """the online set here against the sender's, the plugins and the conflicts; 0 when the same (fuse: when all of
     the sender's are here, beside this PC's own)"""
     owner = man.get("from") or "?"
-    names = (tree.applied() or {}).get("mods") or []
+    names = [n for n in (tree.applied() or {}).get("mods") or [] if n != mods.CHARACTERS]   # (MOD ONLY's entry: mod_only)
     mine = online_set(tree, names, os_mods.code_patches_on(tree))
     theirs = [(n, x) for n, x in man.get("set") or []]
     a, b = collections.Counter(mine), collections.Counter(theirs)
@@ -1066,7 +1066,20 @@ def mod_only(root):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8", newline="\n") as f:
                 f.writelines(l + "\n" for l in [l for l in have if l] + more)
+    # online: the game's mod set (runtime/net_relay.c, from applied.json's list) gets .characters too, so a game in
+    # MOD ONLY meets only games in MOD ONLY with the same mods. Two select screens that differ crash the match's start
+    # (std::out_of_range, 2026-11-27: Local Wireless with a friend on PLAY). The next apply writes the list without it.
     os.makedirs(tree.work, exist_ok=True)
+    applied_path = os.path.join(tree.work, "applied.json")
+    try:
+        with open(applied_path, encoding="utf-8") as f:
+            applied = json.load(f)
+    except (OSError, ValueError):   # (none yet: the apply above writes one, so not seen)
+        applied = {"mods": [], "files": 0, "skipped": {}, "arcropolis": True}
+    if mods.CHARACTERS not in applied.get("mods", []):
+        applied["mods"] = applied.get("mods", []) + [mods.CHARACTERS]
+        with open(applied_path, "w", encoding="utf-8") as f:
+            json.dump(applied, f)
     with open(os.path.join(tree.work, MOD_ONLY), "w", encoding="utf-8") as f:
         json.dump({"made": datetime.datetime.now().isoformat(timespec="seconds"), "new": new, "fighters": sorted(kinds),
                    "hidden": hidden}, f)
